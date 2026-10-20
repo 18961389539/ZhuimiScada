@@ -1,0 +1,365 @@
+@inject RecipeService Recipes
+@inject IDialogService Dialogs
+
+<MudDialog>
+    <DialogContent>
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate Color="Color.Primary" />
+        }
+        else if (_error is not null)
+        {
+            <MudAlert Severity="Severity.Error" Dense>@_error</MudAlert>
+        }
+        else if (_history.Count == 0)
+        {
+            <MudAlert Severity="Severity.Warning" Dense>
+                没有可用的结构化历史快照。旧版本可能来自升级前，无法安全恢复。
+            </MudAlert>
+        }
+        else
+        {
+            <MudAlert Severity="Severity.Info" Dense Class="mb-3">
+                历史版本只记录 SCADA 配方模板，不会直接写入 PLC。恢复会创建一个新修订版本；
+                若设备连接目标或 Tag 地址、类型、缩放等配置已变化，系统会拒绝恢复。
+            </MudAlert>
+            @if (_currentRevisionChanged)
+            {
+                <MudAlert Severity="Severity.Warning" Dense Class="mb-3">
+                    配方修订已从打开时的 v@_revisionAtOpen 更新至 v@_latestCurrentRevision。
+                    历史列表已按最新修订刷新；恢复时仍会再次检查并发修改。
+                </MudAlert>
+            }
+            @if (_diffError is not null)
+            {
+                <MudAlert Severity="Severity.Error" Dense Class="mb-3">@_diffError</MudAlert>
+            }
+
+            <MudExpansionPanels MultiExpansion="true" Class="recipe-history-list">
+                @foreach (var version in _history)
+                {
+                    <MudExpansionPanel @key="version.Revision"
+                                       Text="@GetVersionTitle(version)"
+                                       Expanded="@(version.Revision == _latestCurrentRevision)">
+                        <div class="recipe-history-meta">
+                            <span>设备：@version.DeviceName</span>
+                            <span>连接目标：@version.DeviceEndpoint</span>
+                            @if (!string.IsNullOrWhiteSpace(version.Description))
+                            {
+                                <span>说明：@version.Description</span>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(version.ChangeNote))
+                            {
+                                <span>变更说明：@version.ChangeNote</span>
+                            }
+                        </div>
+
+                        <MudTable Items="version.Parameters" Dense Hover Elevation="0"
+                                  Breakpoint="Breakpoint.Sm" Class="recipe-history-table">
+                            <HeaderContent>
+                                <MudTh>Tag</MudTh>
+                                <MudTh>历史地址</MudTh>
+                                <MudTh>类型</MudTh>
+                                <MudTh>历史设定值</MudTh>
+                            </HeaderContent>
+                            <RowTemplate>
+                                <MudTd DataLabel="Tag">@context.TagName</MudTd>
+                                <MudTd DataLabel="历史地址" Class="mono">@GetAddress(context)</MudTd>
+                                <MudTd DataLabel="类型">@context.DataType</MudTd>
+                                <MudTd DataLabel="历史设定值" Class="mono">
+                                    @FormatValue(context)@GetUnit(context)
+                                </MudTd>
+                            </RowTemplate>
+                            <NoRecordsContent>
+                                <MudText Class="pa-4">该版本没有参数快照。</MudText>
+                            </NoRecordsContent>
+                        </MudTable>
+
+                        <div class="d-flex flex-wrap align-center gap-2 mt-3">
+                            @if (version.Revision > 1)
+                            {
+                                <MudButton Variant="Variant.Outlined" Color="Color.Info" Size="Size.Small"
+                                           StartIcon="@Icons.Material.Outlined.CompareArrows"
+                                           Disabled="@_diffLoading"
+                                           OnClick="@(() => ToggleDiffAsync(version.Revision))">
+                                    @(_expandedDiffRevisions.Contains(version.Revision) ? "收起变更" : "与上一版本对比")
+                                </MudButton>
+                            }
+                            @if (version.Revision != _latestCurrentRevision)
+                            {
+                                <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small"
+                                           StartIcon="@Icons.Material.Outlined.Restore"
+                                           Disabled="@_restoring"
+                                           OnClick="@(() => RestoreAsync(version))">
+                                    恢复此版本为新修订
+                                </MudButton>
+                            }
+                            else
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Success"
+                                         Variant="Variant.Outlined">
+                                    当前版本
+                                </MudChip>
+                            }
+                        </div>
+
+                        @if (_expandedDiffRevisions.Contains(version.Revision) &&
+                             _diffs.TryGetValue(version.Revision, out var diff))
+                        {
+                            <MudPaper Outlined Elevation="0" Class="pa-3 mt-2">
+                                @if (diff.NameChanged || diff.DescriptionChanged || diff.ChangeNoteChanged)
+                                {
+                                    <div class="recipe-history-meta">
+                                        @if (diff.NameChanged)
+                                        {
+                                            <span>名称：@diff.LeftName → @diff.RightName</span>
+                                        }
+                                        @if (diff.DescriptionChanged)
+                                        {
+                                            <span>说明：@FormatText(diff.LeftDescription) → @FormatText(diff.RightDescription)</span>
+                                        }
+                                        @if (diff.ChangeNoteChanged)
+                                        {
+                                            <span>变更说明：@FormatText(diff.LeftChangeNote) → @FormatText(diff.RightChangeNote)</span>
+                                        }
+                                    </div>
+                                }
+                                <div class="d-flex flex-wrap gap-2 my-2">
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Success">新增 @diff.AddedCount</MudChip>
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error">移除 @diff.RemovedCount</MudChip>
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning">修改 @diff.ChangedCount</MudChip>
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">不变 @diff.UnchangedCount</MudChip>
+                                </div>
+                                @if (diff.Items.Count == 0)
+                                {
+                                    <MudAlert Severity="Severity.Info" Dense>
+                                        v@(diff.LeftRevision) 与 v@(diff.RightRevision) 的设定项完全一致。
+                                    </MudAlert>
+                                }
+                                else
+                                {
+                                    <MudTable Items="diff.Items" Dense Hover Elevation="0"
+                                              Breakpoint="Breakpoint.Sm" Class="recipe-history-table">
+                                        <HeaderContent>
+                                            <MudTh>设定项</MudTh>
+                                            <MudTh>变化</MudTh>
+                                            <MudTh>v@(diff.LeftRevision) 值</MudTh>
+                                            <MudTh>v@(diff.RightRevision) 值</MudTh>
+                                        </HeaderContent>
+                                        <RowTemplate>
+                                            <MudTd DataLabel="设定项">
+                                                @context.TagName
+                                                @if (context.Note is not null)
+                                                {
+                                                    <small class="cell-secondary">@context.Note</small>
+                                                }
+                                            </MudTd>
+                                            <MudTd DataLabel="变化">
+                                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                                         Color="@GetDiffKindColor(context.Kind)">
+                                                    @GetDiffKindLabel(context.Kind)
+                                                </MudChip>
+                                            </MudTd>
+                                            <MudTd DataLabel="旧值" Class="mono">@(context.LeftValue ?? "—")</MudTd>
+                                            <MudTd DataLabel="新值" Class="mono">@(context.RightValue ?? "—")</MudTd>
+                                        </RowTemplate>
+                                    </MudTable>
+                                }
+                            </MudPaper>
+                        }
+                    </MudExpansionPanel>
+                }
+            </MudExpansionPanels>
+            @if (_pageCount > 1)
+            {
+                <div class="recipe-history-pagination">
+                    <MudButton Variant="Variant.Outlined" Size="Size.Small"
+                               Disabled="@(_loading || _restoring || _pageIndex == 0)"
+                               OnClick="@(() => LoadPageAsync(_pageIndex - 1))">
+                        较新版本
+                    </MudButton>
+                    <MudText Typo="Typo.body2">第 @(_pageIndex + 1) / @_pageCount 页 · 共 @_totalCount 个版本</MudText>
+                    <MudButton Variant="Variant.Outlined" Size="Size.Small"
+                               Disabled="@(_loading || _restoring || _pageIndex >= _pageCount - 1)"
+                               OnClick="@(() => LoadPageAsync(_pageIndex + 1))">
+                        较旧版本
+                    </MudButton>
+                </div>
+            }
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Disabled="@_restoring">关闭</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private const int HistoryPageSize = 10;
+
+    [CascadingParameter] public IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public Guid RecipeId { get; set; }
+    [Parameter] public int CurrentRevision { get; set; }
+
+    private IReadOnlyList<RecipeService.RevisionHistoryItem> _history = [];
+    private int _revisionAtOpen;
+    private int _latestCurrentRevision;
+    private bool _loading = true;
+    private bool _restoring;
+    private bool _currentRevisionChanged;
+    private string? _error;
+    private int _pageIndex;
+    private int _pageCount;
+    private int _totalCount;
+    private readonly Dictionary<int, RecipeService.RevisionComparison> _diffs = [];
+    private readonly HashSet<int> _expandedDiffRevisions = [];
+    private bool _diffLoading;
+    private string? _diffError;
+
+    protected override Task OnInitializedAsync()
+    {
+        _revisionAtOpen = CurrentRevision;
+        _latestCurrentRevision = CurrentRevision;
+        return LoadPageAsync(0, isInitialLoad: true);
+    }
+
+    private async Task LoadPageAsync(int pageIndex, bool isInitialLoad = false)
+    {
+        if ((_loading && !isInitialLoad) || _restoring)
+            return;
+
+        _loading = true;
+        _error = null;
+        try
+        {
+            var page = await Recipes.GetHistoryAsync(RecipeId, pageIndex, HistoryPageSize);
+            if (page.CurrentRevision != _latestCurrentRevision)
+                _currentRevisionChanged = true;
+            _latestCurrentRevision = page.CurrentRevision;
+            _history = page.Items;
+            _pageIndex = page.PageIndex;
+            _pageCount = page.PageCount;
+            _totalCount = page.TotalCount;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task RestoreAsync(RecipeService.RevisionHistoryItem version)
+    {
+        if (_restoring || version.Revision == _latestCurrentRevision)
+            return;
+
+        if (await Dialogs.ShowMessageBox(
+                "恢复历史配方",
+                $"确定将“{version.Name}”恢复到 v{version.Revision} 的设定吗？系统会创建一个新的本地修订版本，不会下发到 PLC。",
+                yesText: "恢复为新修订", cancelText: "取消") != true)
+            return;
+
+        _restoring = true;
+        _error = null;
+        try
+        {
+            var newRevision = _latestCurrentRevision + 1;
+            await Recipes.RestoreRevisionAsync(RecipeId, version.Revision, _latestCurrentRevision);
+            Dialog.Close(DialogResult.Ok(newRevision));
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _restoring = false;
+        }
+    }
+
+    private static string GetVersionTitle(RecipeService.RevisionHistoryItem version)
+        => $"v{version.Revision} · {version.Name} · {version.CreatedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}";
+
+    private static string GetAddress(RecipeVersionParameterSnapshot parameter)
+    {
+        if (parameter.AddressType == AddressType.Coil)
+            return $"Coil[{parameter.Address}]";
+
+        if (parameter.AddressType != AddressType.HoldingRegister)
+            return $"{parameter.AddressType}[{parameter.Address}]";
+
+        var count = TagValueCodec.RegisterCount(parameter.DataType);
+        return count == 1
+            ? $"HoldingRegister[{parameter.Address}]"
+            : $"HoldingRegister[{parameter.Address}–{parameter.Address + count - 1}]";
+    }
+
+    private static string FormatValue(RecipeVersionParameterSnapshot parameter)
+        => parameter.DataType == TagDataType.Bool
+            ? parameter.BooleanValue switch { true => "开", false => "关", null => "—" }
+            : parameter.EngineeringValue?.ToString("0.###") ?? "—";
+
+    private static string GetUnit(RecipeVersionParameterSnapshot parameter)
+        => parameter.DataType == TagDataType.Bool || string.IsNullOrWhiteSpace(parameter.Unit)
+            ? ""
+            : $" {parameter.Unit}";
+
+    private async Task ToggleDiffAsync(int revision)
+    {
+        _diffError = null;
+        if (_expandedDiffRevisions.Contains(revision))
+        {
+            _expandedDiffRevisions.Remove(revision);
+            return;
+        }
+
+        if (!_diffs.ContainsKey(revision))
+        {
+            _diffLoading = true;
+            try
+            {
+                _diffs[revision] = await Recipes.CompareRevisionsAsync(RecipeId, revision - 1, revision);
+            }
+            catch (Exception ex)
+            {
+                _diffError = ex.Message;
+            }
+            finally
+            {
+                _diffLoading = false;
+            }
+        }
+
+        if (_diffs.ContainsKey(revision))
+            _expandedDiffRevisions.Add(revision);
+    }
+
+    private static string GetDiffKindLabel(RecipeService.RevisionDiffKind kind) => kind switch
+    {
+        RecipeService.RevisionDiffKind.Added => "新增",
+        RecipeService.RevisionDiffKind.Removed => "移除",
+        RecipeService.RevisionDiffKind.Changed => "修改",
+        _ => "不变"
+    };
+
+    private static Color GetDiffKindColor(RecipeService.RevisionDiffKind kind) => kind switch
+    {
+        RecipeService.RevisionDiffKind.Added => Color.Success,
+        RecipeService.RevisionDiffKind.Removed => Color.Error,
+        RecipeService.RevisionDiffKind.Changed => Color.Warning,
+        _ => Color.Default
+    };
+
+    private static string FormatText(string value)
+        => string.IsNullOrWhiteSpace(value) ? "（空）" : value;
+
+    private void Cancel()
+    {
+        if (_currentRevisionChanged)
+            Dialog.Close(DialogResult.Ok("refresh"));
+        else
+            Dialog.Cancel();
+    }
+}

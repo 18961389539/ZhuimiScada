@@ -1,0 +1,83 @@
+@inject IScadaStore Store
+@inject NavigationManager Navigation
+
+<MudTooltip Text="@Tooltip">
+    <MudBadge Content="@Content" Color="@BadgeColor" Overlap="true" Bordered="true" Visible="@HasAny">
+        <MudIconButton Icon="@Icons.Material.Outlined.NotificationsActive"
+                       Color="@(HasAny ? BadgeColor : Color.Inherit)"
+                       OnClick="GoToAlarms" aria-label="@Tooltip" />
+    </MudBadge>
+</MudTooltip>
+
+@code {
+    private AlarmBadgeSummary _summary = new(0, 0, 0);
+    private readonly CancellationTokenSource _stop = new();
+    private Task? _loop;
+
+    private bool HasAny => DisplayCount > 0;
+    private int DisplayCount => _summary.UnacknowledgedCount > 0
+        ? _summary.UnacknowledgedCount
+        : _summary.ClearedUnacknowledgedCount;
+    private string Content => DisplayCount > 99 ? "99+" : DisplayCount.ToString();
+    private Color BadgeColor => _summary.P1UnacknowledgedCount > 0
+        ? Color.Error
+        : _summary.UnacknowledgedCount > 0 ? Color.Warning : Color.Info;
+
+    private string Tooltip
+    {
+        get
+        {
+            if (!HasAny) return "当前没有未确认报警";
+            var text = $"未确认报警 {_summary.UnacknowledgedCount} 条";
+            if (_summary.P1UnacknowledgedCount > 0)
+                text += $"（P1 {_summary.P1UnacknowledgedCount} 条）";
+            if (_summary.ClearedUnacknowledgedCount > 0)
+                text += $" · 已恢复未确认 {_summary.ClearedUnacknowledgedCount} 条";
+            return text + "，点击进入报警管理";
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAsync();
+        _loop = LoopAsync();
+    }
+
+    private async Task LoopAsync()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(_stop.Token))
+                await InvokeAsync(async () =>
+                {
+                    await RefreshAsync();
+                    StateHasChanged();
+                });
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private async Task RefreshAsync()
+    {
+        try
+        {
+            _summary = await Store.GetAlarmBadgeSummaryAsync();
+        }
+        catch
+        {
+            // 徽标查询失败不影响界面
+        }
+    }
+
+    private void GoToAlarms() => Navigation.NavigateTo("/alarms");
+
+    public async ValueTask DisposeAsync()
+    {
+        await _stop.CancelAsync();
+        if (_loop is not null) await _loop;
+        _stop.Dispose();
+    }
+}

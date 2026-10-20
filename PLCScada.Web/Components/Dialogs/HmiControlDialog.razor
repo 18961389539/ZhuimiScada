@@ -1,0 +1,166 @@
+@inject HmiService Hmi
+
+<MudDialog>
+    <DialogContent>
+        <MudAlert Severity="Severity.Info" Dense Class="mb-3">
+            配置 HMI 展示名称、只读数值 Tag 与显示方式。移除展示项不会删除 PLC Tag。
+        </MudAlert>
+        @if (_error is not null)
+        {
+            <MudAlert Severity="Severity.Error" Dense Class="mb-3">@_error</MudAlert>
+        }
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate Color="Color.Primary" />
+        }
+        else
+        {
+            <MudTextField T="string" @bind-Value="_name" Label="展示名称"
+                          Variant="Variant.Outlined" Margin="Margin.Dense"
+                          MaxLength="100" Immediate="true" AutoFocus="true" />
+
+            <MudSelect T="Guid?" Value="_tagId" ValueChanged="ChangeTag"
+                       Label="只读数值 Tag" Variant="Variant.Outlined" Margin="Margin.Dense"
+                       Class="mt-3">
+                @if (Item is { } current && !_eligibleTags.Any(tag => tag.Id == current.Tag.Id))
+                {
+                    <MudSelectItem T="Guid?" Value="@((Guid?)current.Tag.Id)" Disabled="true">
+                        @current.Tag.Name · 当前 Tag 不可用
+                    </MudSelectItem>
+                }
+                @foreach (var tag in _eligibleTags)
+                {
+                    <MudSelectItem T="Guid?" Value="@((Guid?)tag.Id)"
+                                   Disabled="@(!IsTagAvailable(tag))">
+                        @tag.Name · @GetAddressLabel(tag) · @tag.DataType@(IsUsedByAnotherItem(tag.Id) ? " · 已被其他卡片使用" : "")
+                    </MudSelectItem>
+                }
+            </MudSelect>
+
+            <MudSelect T="HmiDisplayType" Value="_type" ValueChanged="ChangeType"
+                       Label="展示类型" Variant="Variant.Outlined" Margin="Margin.Dense"
+                       Class="mt-3">
+                @foreach (var type in Enum.GetValues<HmiDisplayType>())
+                {
+                    <MudSelectItem Value="type">@HmiService.DisplayTypeLabel(type)</MudSelectItem>
+                }
+            </MudSelect>
+
+            @if (_type == HmiDisplayType.Measurement)
+            {
+                <MudTextField T="string" @bind-Value="_group" Label="测量值分组"
+                              Placeholder="例如：正常工况" HelperText="相同分组的测量值显示在一起"
+                              Variant="Variant.Outlined" Margin="Margin.Dense" MaxLength="40"
+                              Immediate="true" Class="mt-3" />
+            }
+            else if (_type is HmiDisplayType.Status or HmiDisplayType.TotalResult or HmiDisplayType.Result)
+            {
+                <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-2">
+                    判定值按 1 = OK、2 = NG 显示；状态卡片使用现有 PLC 状态码对照表。
+                </MudText>
+            }
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Disabled="@(_saving || _loading)">取消</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                   OnClick="SaveAsync"
+                   Disabled="@(_saving || _loading || _tagId is null || string.IsNullOrWhiteSpace(_name))">
+            @(_saving ? "保存中…" : "保存")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] public IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public HmiService.DisplayItem? Item { get; set; }
+
+    private IReadOnlyList<Tag> _eligibleTags = [];
+    private HashSet<Guid> _usedTagIds = [];
+    private Guid? _tagId;
+    private string _name = "";
+    private string _group = "";
+    private HmiDisplayType _type = HmiDisplayType.Measurement;
+    private bool _loading = true;
+    private bool _saving;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Item is { } item)
+        {
+            _tagId = item.Tag.Id;
+            _name = item.Control.Name;
+            _type = item.Type;
+            _group = item.Group;
+        }
+        try
+        {
+            _eligibleTags = await Hmi.GetEligibleTagsAsync();
+            var displayItems = await Hmi.GetDisplayItemsAsync();
+            _usedTagIds = displayItems
+                .Where(displayItem => displayItem.Control.Id != Item?.Control.Id)
+                .Select(displayItem => displayItem.Tag.Id)
+                .ToHashSet();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private bool IsTagCompatible(Tag tag)
+        => _type is HmiDisplayType.Measurement ||
+           tag.DataType is not (TagDataType.Float32 or TagDataType.Float64);
+
+    private bool IsUsedByAnotherItem(Guid tagId) => _usedTagIds.Contains(tagId);
+
+    private bool IsTagAvailable(Tag tag)
+        => IsTagCompatible(tag) && !IsUsedByAnotherItem(tag.Id);
+
+    private static string GetAddressLabel(Tag tag)
+        => tag.AddressType == AddressType.HoldingRegister
+            ? $"D{tag.Address}"
+            : $"IR[{tag.Address}]";
+
+    private void ChangeTag(Guid? tagId)
+    {
+        _tagId = tagId;
+        _error = null;
+    }
+
+    private void ChangeType(HmiDisplayType type)
+    {
+        _type = type;
+        _error = null;
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_saving || _loading || _tagId is not Guid tagId || string.IsNullOrWhiteSpace(_name))
+            return;
+
+        _saving = true;
+        _error = null;
+        try
+        {
+            await Hmi.SaveControlAsync(
+                Item?.Control.Id, tagId, _name, _type, _group);
+            Dialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private void Cancel() => Dialog.Cancel();
+}

@@ -1,0 +1,79 @@
+.recipe-table-panel .mud-table-toolbar {
+    gap: 10px;
+}
+
+.recipe-table-preview {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    margin-top: 6px;
+    color: var(--mud-palette-text-secondary);
+    font-family: var(--font-mono, monospace);
+    font-size: 10px;
+}
+
+.recipe-table-preview span {
+    overflow-wrap: anywhere;
+}
+
+.recipe-import-input {
+    display: none;
+}
+
+.recipe-import-button,
+.recipe-export-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 36px;
+    padding: 0 10px;
+    border: 1px solid var(--mud-palette-divider);
+    border-radius: 7px;
+    color: var(--mud-palette-text-primary);
+    background: var(--mud-palette-surface);
+    cursor: pointer;
+    text-decoration: none;
+    transition: border-color .15s ease, background-color .15s ease;
+}
+
+.recipe-import-button {
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.recipe-export-button {
+    width: 32px;
+    min-height: 32px;
+    padding: 0;
+    color: var(--mud-palette-text-secondary);
+}
+
+.recipe-import-button:hover,
+.recipe-export-button:hover {
+    border-color: var(--mud-palette-primary);
+    background: color-mix(in srgb, var(--mud-palette-primary) 8%, var(--mud-palette-surface));
+}
+
+.recipe-export-button:focus-visible,
+.recipe-import-button:focus-visible {
+    outline: 2px solid var(--mud-palette-primary);
+    outline-offset: 2px;
+}
+
+@media (max-width: 700px) {
+    .recipe-table-panel .mud-table-toolbar {
+        height: auto;
+        min-height: 78px;
+        flex-wrap: wrap;
+    }
+
+    .recipe-table-panel .search-field {
+        max-width: none;
+        flex: 1 1 220px;
+    }
+
+    .recipe-import-button {
+        flex: 1 1 auto;
+    }
+}

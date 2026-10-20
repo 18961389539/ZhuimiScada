@@ -1,0 +1,40 @@
+@inject ISnackbar Toast
+
+<MudDialog>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-3">@Message</MudText>
+        <MudSelect T="int" @bind-Value="_minutes" Label="搁置时长"
+                   Variant="Variant.Outlined" Margin="Margin.Dense">
+            <MudSelectItem T="int" Value="5">5 分钟</MudSelectItem>
+            <MudSelectItem T="int" Value="15">15 分钟</MudSelectItem>
+            <MudSelectItem T="int" Value="30">30 分钟</MudSelectItem>
+            <MudSelectItem T="int" Value="60">60 分钟</MudSelectItem>
+            <MudSelectItem T="int" Value="120">120 分钟</MudSelectItem>
+        </MudSelect>
+        <MudTextField T="string" @bind-Value="_reason" Immediate="true" MaxLength="200"
+                      Label="搁置理由（必填）" Variant="Variant.Outlined"
+                      Margin="Margin.Dense" Class="mt-3" />
+        <MudText Typo="Typo.caption" Class="mt-2" Style="opacity:.7">
+            到期自动恢复显示；搁置与取消都会写入审计日志。
+        </MudText>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">取消</MudButton>
+        <MudButton Color="Color.Warning" Variant="Variant.Filled"
+                   Disabled="@string.IsNullOrWhiteSpace(_reason)" OnClick="Confirm">
+            搁置
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] public IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public string Message { get; set; } = "";
+
+    private int _minutes = 15;
+    private string _reason = "";
+
+    private void Confirm() => Dialog.Close(DialogResult.Ok((_minutes, _reason.Trim())));
+
+    private void Cancel() => Dialog.Cancel();
+}

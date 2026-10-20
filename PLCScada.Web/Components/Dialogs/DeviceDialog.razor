@@ -1,0 +1,36 @@
+@inject DeviceService Devices
+@inject ISnackbar Toast
+<MudDialog>
+    <DialogContent>
+        <EditForm Model="_model" OnValidSubmit="SaveAsync" id="device-form">
+            <DataAnnotationsValidator /><ValidationSummary />
+            <MudGrid Spacing="3">
+                <MudItem xs="12"><MudTextField Immediate="true" @bind-Value="_model.Name" Label="设备名称" For="@(() => _model.Name)" Variant="Variant.Outlined" Required /></MudItem>
+                <MudItem xs="12"><MudTextField Immediate="true" @bind-Value="_model.Description" Label="描述" Variant="Variant.Outlined" /></MudItem>
+                <MudItem xs="8"><MudTextField Immediate="true" @bind-Value="_model.IpAddress" Label="IPv4 地址" For="@(() => _model.IpAddress)" Variant="Variant.Outlined" /></MudItem>
+                <MudItem xs="4"><MudNumericField Immediate="true" T="int" @bind-Value="_model.Port" Label="端口" Min="1" Max="65535" Variant="Variant.Outlined" /></MudItem>
+                <MudItem xs="6"><MudNumericField Immediate="true" T="int" @bind-Value="_model.UnitId" Label="Unit ID" Min="1" Max="247" Variant="Variant.Outlined" /></MudItem>
+                <MudItem xs="6"><MudNumericField Immediate="true" T="int" @bind-Value="_model.PollInterval" Label="轮询周期 (ms)" Min="250" Max="60000" Variant="Variant.Outlined" /></MudItem>
+                <MudItem xs="6"><MudNumericField Immediate="true" T="int" @bind-Value="_model.ConnectionTimeout" Label="通信超时 (ms)" Min="200" Max="10000" Variant="Variant.Outlined" /></MudItem>
+                <MudItem xs="6"><MudNumericField Immediate="true" T="int" @bind-Value="_model.HealthCheckAddress" Label="健康检查寄存器（零基）" Min="0" Max="65535" Variant="Variant.Outlined" /></MudItem>
+                <MudItem xs="12"><MudSwitch T="bool" @bind-Value="_model.Enabled" Color="Color.Primary" Label="启用自动连接与轮询" /></MudItem>
+            </MudGrid>
+            <MudAlert Severity="Severity.Info" Dense Class="mt-3">通信测试读取 FC03 健康检查地址。传统 40001 对应零基地址 0，请使用设备实际支持的地址。</MudAlert>
+        </EditForm>
+    </DialogContent>
+    <DialogActions><MudButton OnClick="@(() => Dialog.Cancel())" Disabled="_saving">取消</MudButton><MudButton ButtonType="ButtonType.Submit" form="device-form" Variant="Variant.Filled" Color="Color.Primary" Disabled="_saving">@(_saving ? "保存中…" : "保存设备")</MudButton></DialogActions>
+</MudDialog>
+@code {
+    [CascadingParameter] public IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public Device? Device { get; set; }
+    private Device _model = new(); private bool _saving;
+    protected override void OnInitialized() => _model = Device?.Copy() ?? new();
+    private async Task SaveAsync()
+    {
+        _saving = true;
+        try { await Devices.SaveAsync(_model); Toast.Add("设备已保存", Severity.Success); Dialog.Close(DialogResult.Ok(true)); }
+        catch (Exception ex) { Toast.Add(ex.Message, Severity.Error); }
+        finally { _saving = false; }
+    }
+}
+

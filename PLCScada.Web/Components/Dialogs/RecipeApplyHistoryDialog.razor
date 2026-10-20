@@ -1,0 +1,115 @@
+@inject RecipeService Recipes
+
+<MudDialog>
+    <DialogContent>
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate Color="Color.Primary" />
+        }
+        else if (_error is not null)
+        {
+            <MudAlert Severity="Severity.Error" Dense>@_error</MudAlert>
+        }
+        else if (_totalCount == 0)
+        {
+            <MudAlert Severity="Severity.Info" Dense>
+                配方“@RecipeName”还没有任何下发记录。每次预览下发（含被阻止与失败）都会在此留档。
+            </MudAlert>
+        }
+        else
+        {
+            <MudAlert Severity="Severity.Info" Dense Class="mb-3">
+                下发记录是只读审计：包含成功、与设备一致、被阻止和失败的全部尝试，删除配方不会清除已有记录。
+            </MudAlert>
+
+            <MudTable Items="_records" Dense Hover Elevation="0" Breakpoint="Breakpoint.Sm"
+                      Class="recipe-apply-table">
+                <HeaderContent>
+                    <MudTh>时间</MudTh>
+                    <MudTh>配方版本</MudTh>
+                    <MudTh>结果</MudTh>
+                    <MudTh>摘要</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="时间" Class="mono">
+                        @context.OccurredAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
+                    </MudTd>
+                    <MudTd DataLabel="配方版本" Class="mono">v@(context.Revision)</MudTd>
+                    <MudTd DataLabel="结果">
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                 Color="@(context.Succeeded ? Color.Success : Color.Error)">
+                            @(context.Succeeded ? "成功" : "未完成")
+                        </MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="摘要">
+                        <small class="recipe-apply-error">@context.Summary</small>
+                    </MudTd>
+                </RowTemplate>
+            </MudTable>
+
+            @if (_pageCount > 1)
+            {
+                <div class="recipe-history-pagination">
+                    <MudButton Variant="Variant.Outlined" Size="Size.Small"
+                               Disabled="@(_loading || _pageIndex == 0)"
+                               OnClick="@(() => LoadPageAsync(_pageIndex - 1))">
+                        较新记录
+                    </MudButton>
+                    <MudText Typo="Typo.body2">第 @(_pageIndex + 1) / @_pageCount 页 · 共 @_totalCount 条</MudText>
+                    <MudButton Variant="Variant.Outlined" Size="Size.Small"
+                               Disabled="@(_loading || _pageIndex >= _pageCount - 1)"
+                               OnClick="@(() => LoadPageAsync(_pageIndex + 1))">
+                        较旧记录
+                    </MudButton>
+                </div>
+            }
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">关闭</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private const int RecordPageSize = 10;
+
+    [CascadingParameter] public IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public Guid RecipeId { get; set; }
+    [Parameter] public string RecipeName { get; set; } = "";
+
+    private IReadOnlyList<RecipeApplyRecord> _records = [];
+    private bool _loading = true;
+    private string? _error;
+    private int _pageIndex;
+    private int _pageCount;
+    private int _totalCount;
+
+    protected override Task OnInitializedAsync() => LoadPageAsync(0);
+
+    private async Task LoadPageAsync(int pageIndex)
+    {
+        if (_loading && _records.Count > 0)
+            return;
+
+        _loading = true;
+        _error = null;
+        try
+        {
+            var page = await Recipes.GetApplyRecordsAsync(RecipeId, pageIndex, RecordPageSize);
+            _records = page.Records;
+            _pageIndex = page.PageIndex;
+            _pageCount = page.PageCount;
+            _totalCount = page.TotalCount;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void Cancel() => Dialog.Cancel();
+}

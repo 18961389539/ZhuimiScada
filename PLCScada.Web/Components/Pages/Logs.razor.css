@@ -1,0 +1,52 @@
+.log-filter-select {
+    min-width: 128px;
+}
+
+.log-export-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 36px;
+    padding: 0 10px;
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: 8px;
+    font-size: 12px;
+    white-space: nowrap;
+    text-decoration: none;
+    color: var(--mud-palette-text-primary);
+    background: transparent;
+    transition: border-color .15s ease, background .15s ease;
+}
+
+.log-export-button:hover {
+    border-color: var(--mud-palette-primary);
+    background: color-mix(in srgb, var(--mud-palette-primary) 8%, var(--mud-palette-surface));
+}
+
+.log-export-button.is-disabled {
+    opacity: .45;
+    pointer-events: none;
+}
+
+.log-message {
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.log-pager {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100%;
+    flex-wrap: wrap;
+}
+
+.log-page-size {
+    min-width: 132px;
+}
+
+.log-jump-field {
+    max-width: 104px;
+}

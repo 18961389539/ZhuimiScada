@@ -1,0 +1,151 @@
+.alarm-status-summary {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.alarm-filter-select {
+    min-width: 132px;
+}
+
+.alarm-status-card {
+    cursor: pointer;
+    transition: border-color .15s ease, background .15s ease;
+}
+
+.alarm-status-card.is-selected {
+    border-color: var(--mud-palette-primary);
+    background: color-mix(in srgb, var(--mud-palette-primary) 9%, var(--mud-palette-surface));
+}
+
+.alarm-standing {
+    color: var(--mud-palette-error);
+    font-weight: 600;
+}
+
+.alarm-export-button {
+    display: inline-flex;
+    align-items: center;
+    min-height: 34px;
+    padding: 0 10px;
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: 8px;
+    font-size: 12px;
+    white-space: nowrap;
+    text-decoration: none;
+    color: var(--mud-palette-text-primary);
+}
+
+.alarm-export-button:hover {
+    border-color: var(--mud-palette-primary);
+}
+
+.alarm-page-size {
+    min-width: 132px;
+}
+
+.alarm-pager {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100%;
+    flex-wrap: wrap;
+}
+
+.alarm-status-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-height: 56px;
+    padding: 10px 14px;
+    border: 1px solid var(--mud-palette-divider);
+    border-left: 3px solid var(--mud-palette-text-secondary);
+    border-radius: 8px;
+    color: var(--mud-palette-text-secondary);
+    background: var(--mud-palette-surface);
+    font-size: 12px;
+}
+
+.alarm-status-card strong {
+    color: var(--mud-palette-text-primary);
+    font-family: var(--font-mono, monospace);
+    font-size: 20px;
+    font-variant-numeric: tabular-nums;
+}
+
+.alarm-status-card--active {
+    border-left-color: var(--mud-palette-error);
+}
+
+.alarm-status-card--acknowledged {
+    border-left-color: var(--mud-palette-warning);
+}
+
+.alarm-status-card--cleared {
+    border-left-color: var(--mud-palette-success);
+}
+
+.alarm-filter-summary {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 38px;
+    margin-bottom: 8px;
+    color: var(--mud-palette-text-secondary);
+}
+
+.alarm-filter-summary strong {
+    color: var(--mud-palette-text-primary);
+    font-variant-numeric: tabular-nums;
+}
+
+.alarm-filter-summary button {
+    margin-left: auto;
+}
+
+@media (max-width: 700px) {
+    .alarm-status-summary {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 7px;
+    }
+
+    .alarm-status-card {
+        min-height: 46px;
+    }
+}
+
+@media (max-width: 560px) {
+    .alarm-filter-summary {
+        flex-wrap: wrap;
+        gap: 6px 9px;
+    }
+
+    .alarm-filter-summary button {
+        margin-left: 0;
+    }
+}
+
+.alarm-toolbar {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+}
+
+.alarm-toolbar-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    width: 100%;
+}
+
+.alarm-toolbar-row .mud-button-root,
+.alarm-toolbar-row button,
+.alarm-toolbar-row .alarm-export-button {
+    white-space: nowrap;
+    flex-shrink: 0;
+}

@@ -1,0 +1,663 @@
+@page "/alarms"
+@inherits LivePage
+@using System.Text
+@inject ISnackbar Toast
+@inject PageUiState PageState
+@inject IDialogService Dialogs
+<PageTitle>报警管理 · PLCScada</PageTitle>
+<PageHeading Section="ALARMS" title="报警管理" Description="通信、限值、质量与自定义报警（位/枚举）。未确认恢复（RTN）仍需确认；同源 60 秒内重复触发自动合并计数。" />
+<MudAlert Severity="Severity.Info" Dense Class="mb-5">已接入：设备通信、Tag 限值（死区滞回）、读取质量、自定义报警定义（M 点位/故障码）。点击统计卡可快速筛选。</MudAlert>
+@if (LoadError is not null) { <MudAlert Severity="Severity.Error">@LoadError</MudAlert> }
+<div class="alarm-status-summary" role="status" aria-live="polite">
+    <div class="alarm-status-card alarm-status-card--active @(IsStatusSelected(AlarmStatus.Active) ? "is-selected" : "")"
+         @onclick="() => ToggleStatusFilterAsync(AlarmStatus.Active)">
+        <span>未确认（P1：@_badge.P1UnacknowledgedCount）</span>
+        <strong>@_badge.UnacknowledgedCount</strong>
+    </div>
+    <div class="alarm-status-card alarm-status-card--acknowledged @(IsStatusSelected(AlarmStatus.Acknowledged) ? "is-selected" : "")"
+         @onclick="() => ToggleStatusFilterAsync(AlarmStatus.Acknowledged)">
+        <span>已确认 · 未解除</span>
+        <strong>@_acknowledgedCount</strong>
+    </div>
+    <div class="alarm-status-card alarm-status-card--cleared @(IsStatusSelected(AlarmStatus.ClearedUnacknowledged) ? "is-selected" : "")"
+         @onclick="() => ToggleStatusFilterAsync(AlarmStatus.ClearedUnacknowledged)">
+        <span>已恢复 · 未确认</span>
+        <strong>@_badge.ClearedUnacknowledgedCount</strong>
+    </div>
+    <div class="alarm-status-card alarm-status-card--cleared @(IsStatusSelected(AlarmStatus.Cleared) ? "is-selected" : "")"
+         @onclick="() => ToggleStatusFilterAsync(AlarmStatus.Cleared)">
+        <span>已解除</span>
+        <strong>@_clearedCount</strong>
+    </div>
+</div>
+<div class="alarm-filter-summary" role="status" aria-live="polite">
+    <MudText Typo="Typo.caption">
+        当前显示 <strong>@_alarms.Count</strong> / @_totalCount 条报警 · 搁置中 @_shelvedCount · 已选 @_selected.Count
+    </MudText>
+    @if (HasActiveFilter)
+    {
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info">筛选已应用</MudChip>
+    }
+    <MudButton Variant="Variant.Text" Size="Size.Small" Disabled="@(!HasActiveFilter)"
+               StartIcon="@Icons.Material.Outlined.FilterAltOff" OnClick="ClearFiltersAsync">
+        清除筛选
+    </MudButton>
+</div>
+<MudPaper Outlined Elevation="0" Class="table-panel">
+    <MudTable Items="_alarms" Hover Elevation="0" MultiSelection="true" @bind-SelectedItems="_selected">
+        <ToolBarContent>
+            <div class="alarm-toolbar">
+                <div class="alarm-toolbar-row">
+                    <MudSwitch T="bool" Value="PageState.AlarmsActiveOnly" Label="仅显示未解除"
+                               Color="Color.Primary" ValueChanged="OnActiveOnlyChangedAsync" />
+                    <MudTextField @bind-Value="PageState.AlarmsSearch" Immediate DebounceInterval="400"
+                                  OnDebounceIntervalElapsed="OnSearchChangedAsync"
+                                  Placeholder="搜索报警内容" Variant="Variant.Outlined"
+                                  Margin="Margin.Dense" Class="search-field" />
+                    <MudSelect T="string" Value="_priorityFilter" ValueChanged="OnPriorityChangedAsync"
+                               Label="优先级" Variant="Variant.Outlined" Margin="Margin.Dense" Dense
+                               Class="alarm-filter-select">
+                        <MudSelectItem T="string" Value="@("")">全部优先级</MudSelectItem>
+                        <MudSelectItem T="string" Value="@("P1")">P1（最高）</MudSelectItem>
+                        <MudSelectItem T="string" Value="@("P2")">P2</MudSelectItem>
+                        <MudSelectItem T="string" Value="@("P3")">P3</MudSelectItem>
+                        <MudSelectItem T="string" Value="@("P4")">P4</MudSelectItem>
+                    </MudSelect>
+                    <MudSelect T="Guid?" Value="_deviceFilter" ValueChanged="OnDeviceChangedAsync"
+                               Label="设备" Variant="Variant.Outlined" Margin="Margin.Dense" Dense
+                               Class="alarm-filter-select">
+                        <MudSelectItem T="Guid?" Value="@((Guid?)null)">全部设备</MudSelectItem>
+                        @foreach (var device in _devices)
+                        {
+                            <MudSelectItem T="Guid?" Value="@((Guid?)device.Id)">@device.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudSelect T="string" Value="_sortMode" ValueChanged="OnSortChangedAsync"
+                               Label="排序" Variant="Variant.Outlined" Margin="Margin.Dense" Dense
+                               Class="alarm-filter-select">
+                        <MudSelectItem T="string" Value="@("priority")">优先级优先</MudSelectItem>
+                        <MudSelectItem T="string" Value="@("time")">时间优先</MudSelectItem>
+                    </MudSelect>
+                    <MudChip T="string" Size="Size.Small"
+                             Variant="@(_shelvedOnly ? Variant.Filled : Variant.Outlined)"
+                             Color="@(_shelvedOnly ? Color.Warning : Color.Default)"
+                             OnClick="ToggleShelvedAsync">只看搁置中</MudChip>
+                    <MudChip T="string" Size="Size.Small"
+                             Variant="@(_standingOnly ? Variant.Filled : Variant.Outlined)"
+                             Color="@(_standingOnly ? Color.Info : Color.Default)"
+                             OnClick="ToggleStandingAsync">只看常驻（&gt;24h）</MudChip>
+                </div>
+                <div class="alarm-toolbar-row alarm-toolbar-actions">
+                    @if (_selected.Count > 0)
+                    {
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                                   StartIcon="@Icons.Material.Outlined.DoneAll" OnClick="BatchAcknowledgeAsync">
+                            批量确认（@_selected.Count）
+                        </MudButton>
+                        <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="ClearSelectionAsync">清空选择</MudButton>
+                    }
+                    @if (_exportHref.Length > 0)
+                    {
+                        <a class="alarm-export-button" href="@_exportHref" download="@_exportFileName"
+                           title="@($"导出当前筛选结果（{_exportCount} 条，CSV）")">导出 CSV</a>
+                    }
+                    <MudIconButton Icon="@Icons.Material.Outlined.Refresh" Size="Size.Small"
+                                   title="立即刷新" OnClick="ReloadAsync" />
+                    <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small"
+                               StartIcon="@Icons.Material.Outlined.Insights" OnClick="OpenStatisticsAsync">统计</MudButton>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Warning" Size="Size.Small"
+                               StartIcon="@Icons.Material.Outlined.LayersClear" OnClick="OpenSuppressionAsync">抑制</MudButton>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small"
+                               StartIcon="@Icons.Material.Outlined.Tune" OnClick="OpenDefinitionsAsync">报警定义</MudButton>
+                </div>
+            </div>
+        </ToolBarContent>
+        <HeaderContent>
+            <MudTh>发生时间</MudTh>
+            <MudTh>持续</MudTh>
+            <MudTh>优先级</MudTh>
+            <MudTh>消息</MudTh>
+            <MudTh>设备</MudTh>
+            <MudTh>状态</MudTh>
+            <MudTh>确认</MudTh>
+            <MudTh>操作</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="时间" Class="mono">
+                @context.OccurredAt.ToLocalTime().ToString("MM-dd HH:mm:ss")
+                @if (context.RepeatCount > 1)
+                {
+                    <MudTooltip Text="60 秒窗口内重复触发已合并">
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Warning">×@context.RepeatCount</MudChip>
+                    </MudTooltip>
+                }
+            </MudTd>
+            <MudTd DataLabel="持续" Class="mono">
+                <span class="@(IsStanding(context) ? "alarm-standing" : "")">@FormatDuration(context)</span>
+            </MudTd>
+            <MudTd DataLabel="优先级">
+                <MudChip T="string" Size="Size.Small" Variant="@GetPriorityVariant(context.Priority)"
+                         Color="@GetPriorityColor(context.Priority)">@context.Priority</MudChip>
+            </MudTd>
+            <MudTd DataLabel="消息">
+                @context.Message
+                <small style="opacity:.65"> · @GetSourceLabel(context.Source)</small>
+            </MudTd>
+            <MudTd DataLabel="设备">@GetDeviceName(context.Source)</MudTd>
+            <MudTd DataLabel="状态">
+                <MudChip T="string" Color="@GetStatusColor(context.Status)" Size="Size.Small" Variant="Variant.Filled">@GetStatusLabel(context.Status)</MudChip>
+                @if (IsShelved(context))
+                {
+                    <MudTooltip Text="@($"搁置理由：{context.ShelveReason}")">
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning" Class="ml-1">
+                            搁置 · 剩 @ShelveRemainingMinutes(context) 分
+                        </MudChip>
+                    </MudTooltip>
+                }
+            </MudTd>
+            <MudTd DataLabel="确认时间">
+                @(context.AcknowledgedAt?.ToLocalTime().ToString("MM-dd HH:mm:ss") ?? "—")
+                @if (!string.IsNullOrWhiteSpace(context.AcknowledgeNote))
+                {
+                    <MudTooltip Text="@context.AcknowledgeNote">
+                        <MudIcon Icon="@Icons.Material.Outlined.StickyNote2" Size="Size.Small" />
+                    </MudTooltip>
+                }
+            </MudTd>
+            <MudTd DataLabel="操作">
+                <MudButton Size="Size.Small" Color="Color.Primary"
+                           Disabled="@(context.Status is not (AlarmStatus.Active or AlarmStatus.ClearedUnacknowledged))"
+                           OnClick="@(() => AcknowledgeAsync(context))">确认</MudButton>
+                @if (IsShelved(context))
+                {
+                    <MudButton Size="Size.Small" Color="Color.Warning" OnClick="@(() => UnShelveAsync(context))">取消搁置</MudButton>
+                }
+                else if (context.Status is AlarmStatus.Active or AlarmStatus.Acknowledged)
+                {
+                    <MudButton Size="Size.Small" OnClick="@(() => ShelveAsync(context))">搁置</MudButton>
+                }
+                <MudIconButton Icon="@Icons.Material.Outlined.Info" Size="Size.Small"
+                               title="查看详情" OnClick="@(() => OpenDetailAsync(context))" />
+            </MudTd>
+        </RowTemplate>
+        <NoRecordsContent><MudText Class="pa-8">当前没有符合条件的报警。</MudText></NoRecordsContent>
+        <PagerContent>
+            <div class="alarm-pager">
+                <MudText Typo="Typo.caption" Class="muted">
+                    共 @_totalCount 条 · 第 @_page / @_pageCount 页
+                </MudText>
+                <div class="d-flex align-center flex-wrap gap-2">
+                    <MudSelect T="int" Value="_pageSize" ValueChanged="OnPageSizeChangedAsync" Dense
+                               Variant="Variant.Outlined" Margin="Margin.Dense" Class="alarm-page-size">
+                        <MudSelectItem T="int" Value="50">每页 50 条</MudSelectItem>
+                        <MudSelectItem T="int" Value="100">每页 100 条</MudSelectItem>
+                        <MudSelectItem T="int" Value="200">每页 200 条</MudSelectItem>
+                    </MudSelect>
+                    <MudPagination Count="_pageCount" Selected="@_page" SelectedChanged="OnPageChangedAsync"
+                                   BoundaryCount="1" MiddleCount="2" Size="Size.Small" />
+                </div>
+            </div>
+        </PagerContent>
+    </MudTable>
+</MudPaper>
+@code {
+    private IReadOnlyList<AlarmRecord> _alarms = [];
+    private HashSet<AlarmRecord> _selected = [];
+    private IReadOnlyList<Device> _devices = [];
+    private IReadOnlyList<Tag> _tags = [];
+    private IReadOnlyList<AlarmDefinition> _definitions = [];
+    private Dictionary<Guid, string> _deviceNames = [];
+    private Dictionary<Guid, string> _tagNames = [];
+    private Dictionary<Guid, Guid> _tagDevice = [];
+    private Dictionary<Guid, Guid> _definitionTag = [];
+    private AlarmBadgeSummary _badge = new(0, 0, 0);
+    private int _acknowledgedCount;
+    private int _clearedCount;
+    private int _shelvedCount;
+    private int _totalCount;
+    private int _page = 1;
+    private int _pageCount = 1;
+    private int _pageSize = 50;
+    private string _priorityFilter = "";
+    private string _sortMode = "priority";
+    private Guid? _deviceFilter;
+    private AlarmStatus? _statusFilter;
+    private bool _shelvedOnly;
+    private bool _standingOnly;
+    private bool _loaded;
+    private bool _loading;
+    private DateTimeOffset _lastAutoRefresh = DateTimeOffset.MinValue;
+    private string _exportHref = "";
+    private string _exportFileName = "Alarm.csv";
+    private int _exportCount;
+
+    private bool HasActiveFilter => PageState.AlarmsActiveOnly || !string.IsNullOrWhiteSpace(PageState.AlarmsSearch) ||
+                                    _priorityFilter.Length > 0 || _deviceFilter.HasValue ||
+                                    _statusFilter.HasValue || _shelvedOnly || _standingOnly;
+
+    protected override async Task RefreshAsync()
+    {
+        if (!_loaded)
+        {
+            await LoadAsync();
+            return;
+        }
+        if (_selected.Count > 0)
+            return;
+        if (DateTimeOffset.UtcNow - _lastAutoRefresh < TimeSpan.FromSeconds(5))
+            return;
+        _lastAutoRefresh = DateTimeOffset.UtcNow;
+        await LoadAsync();
+    }
+
+    private AlarmQuery BuildQuery(int page) => new(
+        PageState.AlarmsSearch,
+        PageState.AlarmsActiveOnly,
+        _statusFilter is { } status ? [status] : null,
+        _priorityFilter.Length == 0 ? null : [Enum.Parse<AlarmPriority>(_priorityFilter)],
+        null,
+        _deviceFilter is Guid deviceId ? BuildDeviceSources(deviceId) : null,
+        _shelvedOnly,
+        _standingOnly,
+        _sortMode == "time",
+        page,
+        _pageSize);
+
+    private IReadOnlyList<string> BuildDeviceSources(Guid deviceId)
+    {
+        var sources = new List<string> { $"Device:{deviceId}" };
+        var deviceTags = _tags.Where(t => t.DeviceId == deviceId).ToArray();
+        foreach (var tag in deviceTags)
+        {
+            sources.Add($"Tag:{tag.Id}");
+            sources.Add($"Tag:{tag.Id}:High");
+            sources.Add($"Tag:{tag.Id}:Low");
+            sources.Add($"TagQuality:{tag.Id}");
+        }
+        var tagIds = deviceTags.Select(t => t.Id).ToHashSet();
+        foreach (var definition in _definitions.Where(d => tagIds.Contains(d.TagId)))
+            sources.Add($"AlarmDef:{definition.Id}");
+        return sources;
+    }
+
+    private async Task LoadAsync()
+    {
+        if (_loading) return;
+        _loading = true;
+        try
+        {
+            _devices = await Store.GetDevicesAsync();
+            _tags = await Store.GetTagsAsync();
+            _definitions = await Store.GetAlarmDefinitionsAsync();
+            _deviceNames = _devices.ToDictionary(x => x.Id, x => x.Name);
+            _tagNames = _tags.ToDictionary(x => x.Id, x => x.Name);
+            _tagDevice = _tags.ToDictionary(x => x.Id, x => x.DeviceId);
+            _definitionTag = _definitions.ToDictionary(x => x.Id, x => x.TagId);
+            _badge = await Store.GetAlarmBadgeSummaryAsync();
+            _acknowledgedCount = (await Store.QueryAlarmsAsync(
+                new AlarmQuery(Statuses: [AlarmStatus.Acknowledged], PageSize: 10))).TotalCount;
+            _clearedCount = (await Store.QueryAlarmsAsync(
+                new AlarmQuery(Statuses: [AlarmStatus.Cleared], PageSize: 10))).TotalCount;
+            _shelvedCount = (await Store.QueryAlarmsAsync(
+                new AlarmQuery(ShelvedOnly: true, PageSize: 10))).TotalCount;
+
+            var result = await Store.QueryAlarmsAsync(BuildQuery(_page));
+            _pageCount = Math.Max(1, (int)Math.Ceiling(result.TotalCount / (double)_pageSize));
+            if (_page > _pageCount)
+            {
+                _page = _pageCount;
+                result = await Store.QueryAlarmsAsync(BuildQuery(_page));
+            }
+            _totalCount = result.TotalCount;
+            _alarms = result.Items;
+            _selected = [];
+
+            var exportItems = await Store.QueryAlarmsForExportAsync(BuildQuery(1));
+            _exportCount = exportItems.Count;
+            _exportHref = exportItems.Count == 0 ? "" : BuildCsvHref(exportItems);
+            _exportFileName = $"Alarm-{DateTime.Now:yyyyMMdd-HHmmss}.csv";
+            _loaded = true;
+        }
+        catch (Exception ex)
+        {
+            LoadError = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private string BuildCsvHref(IReadOnlyList<AlarmRecord> items)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine("发生时间,持续,优先级,状态,设备,来源,消息,确认时间,备注,恢复时间,重复次数");
+        foreach (var alarm in items)
+        {
+            builder.Append(alarm.OccurredAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")).Append(',')
+                .Append(FormatDuration(alarm)).Append(',')
+                .Append(alarm.Priority).Append(',')
+                .Append(GetStatusLabel(alarm.Status)).Append(',')
+                .Append(Csv(GetDeviceName(alarm.Source))).Append(',')
+                .Append(Csv(GetSourceLabel(alarm.Source))).Append(',')
+                .Append(Csv(alarm.Message)).Append(',')
+                .Append(alarm.AcknowledgedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "").Append(',')
+                .Append(Csv(alarm.AcknowledgeNote ?? "")).Append(',')
+                .Append(alarm.ClearedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "").Append(',')
+                .Append(alarm.RepeatCount)
+                .AppendLine();
+        }
+        return $"data:text/csv;charset=utf-8;base64,{Convert.ToBase64String(
+            Encoding.UTF8.GetBytes("\uFEFF" + builder))}";
+    }
+
+    private static string Csv(string value)
+        => value.AsSpan().IndexOfAny(",\"\r\n") < 0 ? value : $"\"{value.Replace("\"", "\"\"")}\"";
+
+    private Task ReloadAsync() => LoadAsync();
+
+    private bool IsStatusSelected(AlarmStatus status) => _statusFilter == status;
+
+    private async Task ToggleStatusFilterAsync(AlarmStatus status)
+    {
+        _statusFilter = _statusFilter == status ? null : status;
+        _page = 1;
+        await LoadAsync();
+    }
+
+    private async Task ToggleShelvedAsync()
+    {
+        _shelvedOnly = !_shelvedOnly;
+        _page = 1;
+        await LoadAsync();
+    }
+
+    private async Task ToggleStandingAsync()
+    {
+        _standingOnly = !_standingOnly;
+        _page = 1;
+        await LoadAsync();
+    }
+
+    private async Task OnActiveOnlyChangedAsync(bool value)
+    {
+        PageState.AlarmsActiveOnly = value;
+        _page = 1;
+        await LoadAsync();
+    }
+
+    private async Task OnSearchChangedAsync(string _)
+    {
+        _page = 1;
+        await LoadAsync();
+    }
+
+    private async Task OnPriorityChangedAsync(string value)
+    {
+        _priorityFilter = value ?? "";
+        _page = 1;
+        await LoadAsync();
+    }
+
+    private async Task OnDeviceChangedAsync(Guid? deviceId)
+    {
+        _deviceFilter = deviceId;
+        _page = 1;
+        await LoadAsync();
+    }
+
+    private async Task OnSortChangedAsync(string value)
+    {
+        _sortMode = value == "time" ? "time" : "priority";
+        _page = 1;
+        await LoadAsync();
+    }
+
+    private async Task OnPageChangedAsync(int page)
+    {
+        if (page == _page) return;
+        _page = page;
+        await LoadAsync();
+    }
+
+    private async Task OnPageSizeChangedAsync(int size)
+    {
+        _pageSize = size is 100 or 200 ? size : 50;
+        _page = 1;
+        await LoadAsync();
+    }
+
+    private async Task ClearFiltersAsync()
+    {
+        PageState.AlarmsActiveOnly = false;
+        PageState.AlarmsSearch = "";
+        _priorityFilter = "";
+        _deviceFilter = null;
+        _statusFilter = null;
+        _shelvedOnly = false;
+        _standingOnly = false;
+        _page = 1;
+        await LoadAsync();
+    }
+
+    private static bool IsShelved(AlarmRecord alarm)
+        => alarm.ShelvedUntil is { } until && until > DateTimeOffset.UtcNow &&
+           alarm.Status is AlarmStatus.Active or AlarmStatus.Acknowledged;
+
+    private static bool IsOpen(AlarmRecord alarm)
+        => alarm.Status is AlarmStatus.Active or AlarmStatus.Acknowledged;
+
+    private static bool IsStanding(AlarmRecord alarm)
+        => IsOpen(alarm) && DateTimeOffset.UtcNow - alarm.OccurredAt > TimeSpan.FromHours(24);
+
+    private static int ShelveRemainingMinutes(AlarmRecord alarm)
+        => alarm.ShelvedUntil is { } until ? Math.Max(0, (int)Math.Ceiling((until - DateTimeOffset.UtcNow).TotalMinutes)) : 0;
+
+    private static string FormatDuration(AlarmRecord alarm)
+    {
+        var end = alarm.Status is AlarmStatus.Cleared or AlarmStatus.ClearedUnacknowledged
+            ? alarm.ClearedAt ?? alarm.OccurredAt
+            : DateTimeOffset.UtcNow;
+        var span = end - alarm.OccurredAt;
+        return span.TotalMinutes < 1 ? $"{span.TotalSeconds:0} 秒"
+            : span.TotalHours < 1 ? $"{span.TotalMinutes:0} 分"
+            : span.TotalDays < 1 ? $"{span.TotalHours:0.#} 小时"
+            : $"{span.TotalDays:0.#} 天";
+    }
+
+    private string GetDeviceName(string source)
+    {
+        if (source.StartsWith("Device:", StringComparison.Ordinal) && Guid.TryParse(source[7..], out var deviceId))
+            return _deviceNames.GetValueOrDefault(deviceId, "已删除");
+        if (source.StartsWith("TagQuality:", StringComparison.Ordinal) && Guid.TryParse(source[11..], out var qualityId))
+            return GetDeviceByTag(qualityId);
+        if (source.StartsWith("Tag:", StringComparison.Ordinal))
+        {
+            var rest = source[4..];
+            var separator = rest.IndexOf(':');
+            if (Guid.TryParse(separator < 0 ? rest : rest[..separator], out var tagId))
+                return GetDeviceByTag(tagId);
+        }
+        if (source.StartsWith("AlarmDef:", StringComparison.Ordinal) && Guid.TryParse(source[9..], out var definitionId))
+            return _definitionTag.TryGetValue(definitionId, out var definitionTagId) ? GetDeviceByTag(definitionTagId) : "已删除";
+        return "—";
+    }
+
+    private string GetDeviceByTag(Guid tagId)
+        => _tagDevice.TryGetValue(tagId, out var deviceId) ? _deviceNames.GetValueOrDefault(deviceId, "已删除") : "已删除";
+
+    private static string GetSourceLabel(string source) => source switch
+    {
+        var s when s.StartsWith("Device:", StringComparison.Ordinal) => "设备通信",
+        var s when s.StartsWith("TagQuality:", StringComparison.Ordinal) => "读取质量",
+        var s when s.StartsWith("Tag:", StringComparison.Ordinal) => s.EndsWith(":High", StringComparison.Ordinal) ? "Tag 上限" :
+            s.EndsWith(":Low", StringComparison.Ordinal) ? "Tag 下限" : "Tag 限值",
+        var s when s.StartsWith("AlarmDef:", StringComparison.Ordinal) => "自定义定义",
+        _ => source
+    };
+
+    private static string GetStatusLabel(AlarmStatus status) => status switch
+    {
+        AlarmStatus.Active => "未确认",
+        AlarmStatus.Acknowledged => "已确认",
+        AlarmStatus.ClearedUnacknowledged => "已恢复未确认",
+        AlarmStatus.Cleared => "已解除",
+        _ => "未知"
+    };
+
+    private static Color GetStatusColor(AlarmStatus status) => status switch
+    {
+        AlarmStatus.Active => Color.Error,
+        AlarmStatus.Acknowledged => Color.Warning,
+        AlarmStatus.ClearedUnacknowledged => Color.Info,
+        AlarmStatus.Cleared => Color.Default,
+        _ => Color.Default
+    };
+
+    private static Color GetPriorityColor(AlarmPriority priority) => priority switch
+    {
+        AlarmPriority.P1 => Color.Error,
+        AlarmPriority.P2 => Color.Warning,
+        AlarmPriority.P3 => Color.Info,
+        _ => Color.Default
+    };
+
+    private static Variant GetPriorityVariant(AlarmPriority priority)
+        => priority == AlarmPriority.P1 ? Variant.Filled : Variant.Outlined;
+
+    private async Task AcknowledgeAsync(AlarmRecord alarm)
+    {
+        var note = await PromptAcknowledgeNoteAsync([alarm.Message], batch: false);
+        if (note is null) return;
+        try
+        {
+            await Store.AcknowledgeAlarmAsync(alarm.AlarmId, note);
+            Toast.Add("报警已确认", Severity.Success);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private async Task ClearSelectionAsync()
+    {
+        _selected = [];
+        await Task.CompletedTask;
+    }
+
+    private async Task BatchAcknowledgeAsync()
+    {
+        if (_selected.Count == 0) return;
+        var note = await PromptAcknowledgeNoteAsync(_selected.Select(x => x.Message).ToArray(), batch: true);
+        if (note is null) return;
+        var succeeded = 0;
+        var failed = 0;
+        foreach (var alarm in _selected.Where(x =>
+                     x.Status is AlarmStatus.Active or AlarmStatus.ClearedUnacknowledged).ToArray())
+        {
+            try
+            {
+                await Store.AcknowledgeAlarmAsync(alarm.AlarmId, note);
+                succeeded++;
+            }
+            catch
+            {
+                failed++;
+            }
+        }
+        Toast.Add(failed == 0
+            ? $"已确认 {succeeded} 条报警"
+            : $"已确认 {succeeded} 条，{failed} 条失败（可能已被处理）",
+            failed == 0 ? Severity.Success : Severity.Warning);
+        _selected = [];
+        await LoadAsync();
+    }
+
+    private async Task<string?> PromptAcknowledgeNoteAsync(IReadOnlyList<string> messages, bool batch)
+    {
+        var dialog = await Dialogs.ShowAsync<AlarmAcknowledgeDialog>(
+            batch ? $"批量确认 {messages.Count} 条报警" : "确认报警",
+            new DialogParameters<AlarmAcknowledgeDialog>
+            {
+                { x => x.Message, batch
+                    ? string.Join("\n", messages.Take(5)) + (messages.Count > 5 ? "\n…" : "")
+                    : messages[0] }
+            },
+            new() { FullWidth = true, MaxWidth = MaxWidth.Small });
+        var result = await dialog.Result;
+        if (result is null || result.Canceled) return null;
+        return result.Data as string ?? "";
+    }
+
+    private async Task ShelveAsync(AlarmRecord alarm)
+    {
+        var dialog = await Dialogs.ShowAsync<AlarmShelveDialog>(
+            "搁置报警",
+            new DialogParameters<AlarmShelveDialog> { { x => x.Message, alarm.Message } },
+            new() { FullWidth = true, MaxWidth = MaxWidth.Small });
+        var result = await dialog.Result;
+        if (result is null || result.Canceled || result.Data is not ValueTuple<int, string> data) return;
+        try
+        {
+            await Store.ShelveAlarmAsync(alarm.AlarmId, data.Item1, data.Item2);
+            Toast.Add($"已搁置 {data.Item1} 分钟", Severity.Success);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"搁置失败：{ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task UnShelveAsync(AlarmRecord alarm)
+    {
+        try
+        {
+            await Store.UnShelveAlarmAsync(alarm.AlarmId);
+            Toast.Add("已取消搁置", Severity.Success);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"取消搁置失败：{ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task OpenDetailAsync(AlarmRecord alarm)
+    {
+        await Dialogs.ShowAsync<AlarmDetailDialog>(
+            "报警详情",
+            new DialogParameters<AlarmDetailDialog>
+            {
+                { x => x.Alarm, alarm },
+                { x => x.DeviceName, GetDeviceName(alarm.Source) },
+                { x => x.SourceLabel, GetSourceLabel(alarm.Source) }
+            },
+            new() { FullWidth = true, MaxWidth = MaxWidth.Small, CloseButton = true });
+    }
+
+    private async Task OpenStatisticsAsync()
+    {
+        await Dialogs.ShowAsync<AlarmKpiDialog>(
+            "报警统计分析", new DialogParameters<AlarmKpiDialog>(),
+            new() { FullWidth = true, MaxWidth = MaxWidth.Large, CloseButton = true });
+    }
+
+    private async Task OpenSuppressionAsync()
+    {
+        await Dialogs.ShowAsync<AlarmSuppressionDialog>(
+            "报警抑制（按设备）", new DialogParameters<AlarmSuppressionDialog>(),
+            new() { FullWidth = true, MaxWidth = MaxWidth.Large, CloseButton = true });
+        await LoadAsync();
+    }
+
+    private async Task OpenDefinitionsAsync()
+    {
+        await Dialogs.ShowAsync<AlarmDefinitionsDialog>(
+            "报警定义管理", new DialogParameters<AlarmDefinitionsDialog>(),
+            new() { FullWidth = true, MaxWidth = MaxWidth.Large, CloseButton = true });
+        await LoadAsync();
+    }
+}

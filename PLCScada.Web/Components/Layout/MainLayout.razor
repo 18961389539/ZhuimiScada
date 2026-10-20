@@ -1,0 +1,150 @@
+@inherits LiveLayout
+@implements IAsyncDisposable
+@inject NavigationManager Navigation
+@inject IScadaStore Store
+@inject ITagRuntime TagRuntime
+<MudThemeProvider Theme="_theme" IsDarkMode="_dark" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+<MudLayout>
+    <MudAppBar Elevation="0" Class="scada-appbar">
+        <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" OnClick="@(() => _open = !_open)" aria-label="折叠导航" />
+        <MudText Typo="Typo.subtitle1" Class="appbar-title">@CurrentTitle</MudText>
+        <MudSpacer />
+        <div class="header-status @RunningClass"><span class="status-dot"></span> @RunningLabel</div>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@(Online > 0 ? Color.Success : Color.Default)">Modbus · @Online 在线</MudChip>
+        <AlarmBadge />
+        <MudIconButton Icon="@(_dark ? Icons.Material.Outlined.LightMode : Icons.Material.Outlined.DarkMode)" OnClick="@(() => _dark = !_dark)" aria-label="切换深浅色模式" />
+        <MudAvatar Size="Size.Small" Color="Color.Primary">L</MudAvatar>
+        <span class="local-user">本地操作员</span>
+    </MudAppBar>
+    <MudDrawer @bind-Open="_open" Variant="DrawerVariant.Responsive" Width="252px" Elevation="0" Class="scada-sidebar">
+        <div class="brand"><div class="brand-mark">P<span>›</span></div><div><strong>PLCScada</strong><small>INDUSTRIAL WORKSPACE</small></div></div>
+        <div class="nav-caption">工作空间 / WORKSPACE</div>
+        <MudNavMenu>
+            <MudNavLink Href="/" Match="NavLinkMatch.All" Icon="@Icons.Material.Outlined.SpaceDashboard">
+                系统总览 <small>Dashboard</small>
+            </MudNavLink>
+            <MudNavLink Href="/hmi" Match="NavLinkMatch.All" Icon="@Icons.Material.Outlined.Monitor">
+                监控画面 <small>HMI</small>
+            </MudNavLink>
+            <MudNavLink Href="/tags" Icon="@Icons.Material.Outlined.Sell">
+                变量管理 <small>Tags</small>
+            </MudNavLink>
+            <MudNavLink Href="/devices" Icon="@Icons.Material.Outlined.Dns">
+                设备管理 <small>Devices</small>
+            </MudNavLink>
+
+            <div class="nav-caption">工艺 / PROCESS</div>
+            <MudNavLink Href="/alarms" Icon="@Icons.Material.Outlined.NotificationsActive">
+                报警管理 <small>Alarms</small>
+                @if (_badge.UnacknowledgedCount > 0)
+                {
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Filled"
+                             Color="@(_badge.P1UnacknowledgedCount > 0 ? Color.Error : Color.Warning)"
+                             Class="nav-badge">@_badge.UnacknowledgedCount</MudChip>
+                }
+            </MudNavLink>
+            <MudNavLink Href="/trace" Icon="@Icons.Material.Outlined.QrCodeScanner">
+                追溯 SN <small>Trace</small>
+            </MudNavLink>
+            <MudNavLink Href="/recipes" Icon="@Icons.Material.Outlined.MenuBook">
+                配方管理 <small>Recipes</small>
+            </MudNavLink>
+            <MudNavLink Href="/manual" Icon="@Icons.Material.Outlined.TouchApp">
+                手动操作 <small>Manual</small>
+            </MudNavLink>
+
+            <div class="nav-caption">运维 / OPERATIONS</div>
+            <MudNavLink Href="/logs" Icon="@Icons.Material.Outlined.ReceiptLong">
+                运行日志 <small>Logs</small>
+            </MudNavLink>
+            <MudNavLink Href="/settings" Icon="@Icons.Material.Outlined.Settings">
+                系统设置 <small>Settings</small>
+            </MudNavLink>
+        </MudNavMenu>
+        <MudNavLink Href="/contact" Icon="@Icons.Material.Outlined.Contacts" Class="nav-contact">
+            联系我们 <small>Contact</small>
+        </MudNavLink>
+        <div class="sidebar-footer"><span class="status-dot"></span> 采集引擎已启用<small>v0.1 · .NET 10 · 本地工作站</small></div>
+    </MudDrawer>
+    <MudMainContent Class="workspace"><MudContainer MaxWidth="MaxWidth.ExtraExtraLarge">@Body</MudContainer></MudMainContent>
+</MudLayout>
+<div id="blazor-error-ui">连接遇到异常。<a href="" class="reload">重新加载</a><a class="dismiss">×</a></div>
+@code {
+    private bool _open = true, _dark = true;
+    private AlarmBadgeSummary _badge = new(0, 0, 0);
+    private Guid? _runningStateTagId;
+    private bool _isRunning;
+    private bool _runningKnown;
+    private string RunningClass => !_runningKnown ? "is-unknown" : _isRunning ? "is-running" : "is-stopped";
+    private string RunningLabel => !_runningKnown
+        ? "运行状态未监控"
+        : _isRunning ? "运行中" : "已停止";
+    private readonly CancellationTokenSource _badgeStop = new();
+    private Task? _badgeLoop;
+
+    protected override Task OnInitializedAsync()
+    {
+        _badgeLoop = BadgeLoopAsync();
+        return Task.CompletedTask;
+    }
+
+    private async Task BadgeLoopAsync()
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+            do
+            {
+                try
+                {
+                    _badge = await Store.GetAlarmBadgeSummaryAsync();
+                    _runningStateTagId = await Store.GetRunningStateTagIdAsync();
+                    if (_runningStateTagId is Guid runningId)
+                    {
+                        var snapshot = TagRuntime.GetTagSnapshot(runningId);
+                        _runningKnown = snapshot.Quality is TagQuality.Good or TagQuality.Uncertain;
+                        _isRunning = snapshot.CurrentValue switch
+                        {
+                            bool flag => flag,
+                            double number => number == 1d,
+                            _ => false
+                        };
+                    }
+                    else
+                    {
+                        _runningKnown = false;
+                        _isRunning = false;
+                    }
+                    await InvokeAsync(StateHasChanged);
+                }
+                catch (InvalidOperationException)
+                {
+                    // 释放竞态：组件已卸载
+                    return;
+                }
+            } while (await timer.WaitForNextTickAsync(_badgeStop.Token));
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _badgeStop.CancelAsync();
+        if (_badgeLoop is not null) await _badgeLoop;
+        _badgeStop.Dispose();
+    }
+    private string CurrentTitle => new Uri(Navigation.Uri).AbsolutePath.Trim('/') switch
+    { "devices" => "设备管理", "tags" => "变量管理", "recipes" => "配方管理", "hmi" => "监控画面", "manual" => "手动操作", "alarms" => "报警管理", "trace" => "追溯 SN", "logs" => "运行日志", "settings" => "系统设置", "contact" => "联系我们", _ => "系统总览" };
+    private readonly MudTheme _theme = new()
+    {
+        PaletteLight = new() { Primary = "#087f73", Secondary = "#2563eb", Background = "#f3f6fa", AppbarBackground = "#ffffff", AppbarText = "#1a2940", DrawerBackground = "#101d30", DrawerText = "#c4cfdf", Surface = "#ffffff" },
+        PaletteDark = new() { Primary = "#36c6af", Secondary = "#73a7ff", Background = "#0c1523", Surface = "#132136", AppbarBackground = "#101c2d", DrawerBackground = "#0e1b2d", DrawerText = "#c4cfdf", TextPrimary = "#e5edf8", TextSecondary = "#92a4bc", Divider = "#24344a", AppbarText = "#e5edf8" },
+        LayoutProperties = new() { DefaultBorderRadius = "10px", AppbarHeight = "68px" },
+        Typography = new() { Default = new DefaultTypography { FontFamily = ["Bahnschrift", "Microsoft YaHei UI", "Segoe UI", "sans-serif"], FontSize = ".9rem" } }
+    };
+}

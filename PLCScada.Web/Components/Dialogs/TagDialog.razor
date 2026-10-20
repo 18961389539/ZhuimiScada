@@ -1,0 +1,353 @@
+@inject TagService Tags
+@inject DeviceService Devices
+@inject ISnackbar Toast
+@inject IScadaStore Store
+<MudDialog>
+    <DialogContent>
+        <EditForm Model="_model" OnValidSubmit="SaveAsync" id="tag-form">
+            <DataAnnotationsValidator />
+            <ValidationSummary />
+            @if (_devices.Count == 0)
+            {
+                <MudAlert Severity="Severity.Warning" Dense Class="mb-4">当前没有可关联的设备，请先在设备管理中添加设备。</MudAlert>
+            }
+            <MudGrid Spacing="3">
+                <MudItem xs="12"><MudText Typo="Typo.subtitle2" Class="tag-form-section">基本信息</MudText></MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField Immediate="true" @bind-Value="_model.Name" For="@(() => _model.Name)"
+                                  Validation="@((string value) => ValidateName(value))"
+                                  Label="Tag 名称" Variant="Variant.Outlined"
+                                  Required RequiredError="请输入 Tag 名称。" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudSelect T="Guid" @bind-Value="_model.DeviceId" For="@(() => _model.DeviceId)"
+                               Label="关联设备" Variant="Variant.Outlined" Required RequiredError="请选择关联设备。">
+                        @foreach (var device in _devices)
+                        {
+                            <MudSelectItem Value="device.Id">@device.Name@(device.Enabled ? "" : "（已禁用）")</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12"><MudTextField Immediate="true" @bind-Value="_model.Description"
+                                               For="@(() => _model.Description)" Label="描述"
+                                               Variant="Variant.Outlined" /></MudItem>
+
+                <MudItem xs="12"><MudDivider Class="my-1" /><MudText Typo="Typo.subtitle2" Class="tag-form-section mt-3">地址与数据</MudText></MudItem>
+                <MudItem xs="12" md="6">
+                    <MudSelect T="AddressType" Value="_model.AddressType" ValueChanged="AddressChanged"
+                               For="@(() => _model.AddressType)" Label="Modbus 地址类型" Variant="Variant.Outlined">
+                        @foreach (var type in Enum.GetValues<AddressType>())
+                        {
+                            <MudSelectItem Value="type">@type</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudNumericField Immediate="true" T="int" @bind-Value="_model.Address"
+                                     For="@(() => _model.Address)"
+                                     Label="Modbus 地址（十进制、零基）" Min="0" Max="65535"
+                                     Variant="Variant.Outlined" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudText Typo="Typo.caption" Class="mt-n2" Style="opacity:.7">
+                        @RegisterFootprint
+                        换算规则：D→0+n；HD→41088+n；M→Coil 0+n；Y→Coil 24576+八进制；X→DiscreteInput 20480+八进制；S→Coil 28672+n（详见 PLC_Modbus_Address_Map.md）。
+                    </MudText>
+                </MudItem>
+                @if (AddressConflicts.Count > 0)
+                {
+                    <MudItem xs="12">
+                        <MudAlert Severity="Severity.Warning" Dense>
+                            地址范围与同设备 Tag 重叠：@GetConflictSummary()。
+                            允许保存（同一寄存器的别名视图是合法用法），但请确认设备侧映射确实如此。
+                        </MudAlert>
+                    </MudItem>
+                }
+                <MudItem xs="12" md="6">
+                    <MudSelect T="TagDataType" Value="_model.DataType" ValueChanged="DataTypeChanged"
+                               For="@(() => _model.DataType)" Label="数据类型" Variant="Variant.Outlined">
+                        @foreach (var type in CompatibleTypes)
+                        {
+                            <MudSelectItem Value="type">@type</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                @if (_model.DataType == TagDataType.String)
+                {
+                    <MudItem xs="12" md="6">
+                        <MudNumericField Immediate="true" T="int" @bind-Value="_model.StringRegisters"
+                                         For="@(() => _model.StringRegisters)"
+                                         Label="String 寄存器数（每寄存器 2 字符）" Min="1" Max="125"
+                                         Variant="Variant.Outlined" />
+                    </MudItem>
+                    <MudItem xs="12" md="6">
+                        <MudSelect T="StringEncoding" @bind-Value="_model.StringEncoding"
+                                   For="@(() => _model.StringEncoding)" Label="字符串编码"
+                                   Variant="Variant.Outlined">
+                            <MudSelectItem Value="StringEncoding.Ascii">ASCII</MudSelectItem>
+                            <MudSelectItem Value="StringEncoding.Utf16LE">UTF-16LE</MudSelectItem>
+                        </MudSelect>
+                    </MudItem>
+                }
+                <MudItem xs="12" md="6">
+                    <MudSelect T="AccessMode" @bind-Value="_model.AccessMode" For="@(() => _model.AccessMode)"
+                               Disabled="IsReadOnly" Label="访问权限" Variant="Variant.Outlined">
+                        <MudSelectItem Value="AccessMode.ReadOnly">只读</MudSelectItem>
+                        @if (!IsReadOnly)
+                        {
+                            <MudSelectItem Value="AccessMode.ReadWrite">读写授权</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                @if (_model.AccessMode == AccessMode.ReadWrite)
+                {
+                    <MudItem xs="12">
+                        <MudAlert Dense Severity="@(IsManualOutputMapping ? Severity.Info : Severity.Info)">
+                            @(IsManualOutputMapping
+                                ? "该配置匹配手动输出映射；手动页可按住写 1、松开写 0。"
+                                : "读写：该点位可被受控写入、配方下发或手动输出写入；请确认 PLC 侧允许写该地址。")
+                        </MudAlert>
+                    </MudItem>
+                }
+
+                <MudItem xs="12"><MudText Typo="Typo.subtitle2" Class="tag-form-section mt-3">采集设置</MudText></MudItem>
+                <MudItem xs="12">
+                    <MudText Typo="Typo.caption" Class="mt-n2" Style="opacity:.7">
+                        Tag 扫描间隔为全局设置（当前 @(_globalScanInterval) ms），在「系统设置 → 采集与轮询」中维护；实际采集周期不小于设备轮询周期。
+                    </MudText>
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField Immediate="true" @bind-Value="_model.Unit" For="@(() => _model.Unit)"
+                                  Label="工程单位（如 V / A / W / r/min）" Variant="Variant.Outlined" />
+                </MudItem>
+                @if (SelectedDevice is not null)
+                {
+                    <MudItem xs="12">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">
+                            当前实际扫描间隔：@EffectiveScanInterval ms（设备轮询 @SelectedDevice.PollInterval ms 与 Tag 间隔取较大值）
+                        </MudText>
+                    </MudItem>
+                }
+                <MudItem xs="12" md="6">
+                    <MudSwitch T="bool" @bind-Value="_model.Enabled"
+                               Color="Color.Primary" Label="启用变量采集" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">
+                        质量报警（连续读取失败）为全局设置，请在「系统设置 → 采集与轮询」中维护。
+                    </MudText>
+                </MudItem>
+
+                @if (IsBit)
+                {
+                    <MudItem xs="12">
+                        <MudAlert Dense Severity="Severity.Info">
+                            Bool 点位不使用量程/限值报警；如需“位 = 1 触发报警”，请在报警页 →「报警定义」中配置位报警。
+                        </MudAlert>
+                    </MudItem>
+                }
+                @if (IsNumericRegister)
+                {
+                    <MudItem xs="12">
+                        <MudExpansionPanels>
+                            <MudExpansionPanel Text="工程值、量程与字节顺序">
+                                <MudGrid Spacing="3" Class="pt-2">
+                                    <MudItem xs="12" md="6">
+                                        <MudNumericField Immediate="true" T="double" @bind-Value="_model.Scale"
+                                                         For="@(() => _model.Scale)" Label="工程缩放（Scale）"
+                                                         Variant="Variant.Outlined" />
+                                    </MudItem>
+                                    <MudItem xs="12" md="6">
+                                        <MudNumericField Immediate="true" T="double" @bind-Value="_model.Offset"
+                                                         For="@(() => _model.Offset)" Label="工程偏移（Offset）"
+                                                         Variant="Variant.Outlined" />
+                                    </MudItem>
+                                    <MudItem xs="12" md="6">
+                                        <MudNumericField Immediate="true" T="double?" @bind-Value="_model.MinValue"
+                                                         For="@(() => _model.MinValue)" Label="工程值下限（可选）"
+                                                         Variant="Variant.Outlined" />
+                                    </MudItem>
+                                    <MudItem xs="12" md="6">
+                                        <MudNumericField Immediate="true" T="double?" @bind-Value="_model.MaxValue"
+                                                         For="@(() => _model.MaxValue)" Label="工程值上限（可选）"
+                                                         Variant="Variant.Outlined" />
+                                    </MudItem>
+                                    <MudItem xs="12" md="6">
+                                        <MudSelect T="ByteOrder" @bind-Value="_model.ByteOrder"
+                                                   For="@(() => _model.ByteOrder)" Label="字节顺序"
+                                                   Variant="Variant.Outlined">
+                                            @foreach (var type in Enum.GetValues<ByteOrder>())
+                                            {
+                                                <MudSelectItem Value="type">@type</MudSelectItem>
+                                            }
+                                        </MudSelect>
+                                    </MudItem>
+                                    @if (IsMultiRegister)
+                                    {
+                                        <MudItem xs="12" md="6">
+                                            <MudSelect T="WordOrder" @bind-Value="_model.WordOrder"
+                                                       For="@(() => _model.WordOrder)" Label="字顺序"
+                                                       Variant="Variant.Outlined">
+                                                @foreach (var type in Enum.GetValues<WordOrder>())
+                                                {
+                                                    <MudSelectItem Value="type">@type</MudSelectItem>
+                                                }
+                                            </MudSelect>
+                                        </MudItem>
+                                    }
+                                    <MudItem xs="12">
+                                        <MudAlert Dense Severity="Severity.Info">
+                                            工程值 = 原始值 × Scale + Offset。读数超出下限/上限时保留读数并将质量标为 Bad；报警限值与量程独立评估。
+                                        </MudAlert>
+                                    </MudItem>
+                                </MudGrid>
+                            </MudExpansionPanel>
+                            <MudExpansionPanel Text="报警限值（可选）">
+                                <MudGrid Spacing="3" Class="pt-2">
+                                    <MudItem xs="12" md="6">
+                                        <MudNumericField Immediate="true" T="double?" @bind-Value="_model.AlarmHigh"
+                                                         For="@(() => _model.AlarmHigh)" Label="报警上限（≥ 触发）"
+                                                         Variant="Variant.Outlined"
+                                                         Error="@HasAlarmLimitError" ErrorText="@GetAlarmLimitError()" />
+                                    </MudItem>
+                                    <MudItem xs="12" md="6">
+                                        <MudNumericField Immediate="true" T="double?" @bind-Value="_model.AlarmLow"
+                                                         For="@(() => _model.AlarmLow)" Label="报警下限（≤ 触发）"
+                                                         Variant="Variant.Outlined"
+                                                         Error="@HasAlarmLimitError" ErrorText="@GetAlarmLimitError()" />
+                                    </MudItem>
+                                    <MudItem xs="12" md="6">
+                                        <MudNumericField Immediate="true" T="double" @bind-Value="_model.AlarmDeadband"
+                                                         For="@(() => _model.AlarmDeadband)" Label="报警死区（≥ 0）"
+                                                         Min="0" Variant="Variant.Outlined" />
+                                    </MudItem>
+                                    <MudItem xs="12">
+                                        <MudAlert Dense Severity="Severity.Info">
+                                            值达到上限或下限即报警并记录到报警页；恢复到「上限 − 死区」以内（低限对称）才自动解除，
+                                            用于抑制临界抖动。死区默认 0，限值需在工程量程范围内。
+                                        </MudAlert>
+                                    </MudItem>
+                                </MudGrid>
+                            </MudExpansionPanel>
+                        </MudExpansionPanels>
+                    </MudItem>
+                }
+            </MudGrid>
+        </EditForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => Dialog.Cancel())" Disabled="_saving">取消</MudButton>
+        <MudButton ButtonType="ButtonType.Submit" form="tag-form" Variant="Variant.Filled"
+                   Color="Color.Primary" Disabled="@(_saving || _devices.Count == 0 || HasAlarmLimitError)">保存 Tag</MudButton>
+    </DialogActions>
+</MudDialog>
+@code {
+    [CascadingParameter] public IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public Tag? Tag { get; set; }
+    [Parameter] public Guid? InitialDeviceId { get; set; }
+    private Tag _model = new();
+    private IReadOnlyList<Device> _devices = [];
+    private IReadOnlyList<Tag> _existingTags = [];
+    private int _globalScanInterval = 1000;
+    private bool _saving;
+    private bool IsBit => _model.AddressType is AddressType.Coil or AddressType.DiscreteInput;
+    private bool IsReadOnly => _model.AddressType is AddressType.DiscreteInput or AddressType.InputRegister
+        || _model.DataType == TagDataType.String;
+    private IEnumerable<TagDataType> CompatibleTypes => IsBit
+        ? [TagDataType.Bool]
+        : Enum.GetValues<TagDataType>().Where(x => x != TagDataType.Bool);
+    private bool IsNumericRegister => !IsBit && _model.DataType != TagDataType.String;
+    private bool IsMultiRegister => _model.DataType is TagDataType.Int32 or TagDataType.UInt32 or TagDataType.Float32 or TagDataType.Float64;
+    private Device? SelectedDevice => _devices.SingleOrDefault(x => x.Id == _model.DeviceId);
+    private int EffectiveScanInterval => Math.Max(_model.ScanInterval, SelectedDevice?.PollInterval ?? 0);
+    private bool IsManualOutputMapping => _model.AddressType == AddressType.Coil &&
+        _model.DataType == TagDataType.Bool &&
+        ManualOutputService.DefaultOutputPoints.Any(x => x.Name == _model.Name && x.ModbusAddress == _model.Address);
+    private string RegisterFootprint => _model.DataType switch
+    {
+        TagDataType.Bool => "位地址：占用 1 个位（FC01/FC02 读取）。",
+        TagDataType.String => $"字符串：占用 {_model.StringRegisters} 个寄存器（约 {_model.StringRegisters * 2} 字符，{(_model.StringEncoding == StringEncoding.Ascii ? "ASCII" : "UTF-16LE")}）。",
+        TagDataType.Int16 or TagDataType.UInt16 => "占用 1 个寄存器。",
+        TagDataType.Int32 or TagDataType.UInt32 or TagDataType.Float32 => "占用 2 个连续寄存器（本地址及下一地址）。",
+        _ => "占用 4 个连续寄存器（本地址起连续四个）。"
+    };
+
+    private bool HasAlarmLimitError => GetAlarmLimitError() is not null;
+
+    private IReadOnlyList<Tag> AddressConflicts => _model.DeviceId == Guid.Empty
+        ? []
+        : TagService.FindAddressConflicts(_existingTags, _model);
+
+    private string GetConflictSummary()
+        => string.Join("、", AddressConflicts.Select(x => $"“{x.Name}”（{FormatAddress(x)}）"));
+
+    private static string FormatAddress(Tag tag)
+    {
+        var count = TagValueCodec.RegisterCount(tag);
+        return count == 1
+            ? $"{tag.AddressType}[{tag.Address}]"
+            : $"{tag.AddressType}[{tag.Address}–{tag.Address + count - 1}]";
+    }
+
+    private string? GetAlarmLimitError()
+        => _model.AlarmLow is double low && _model.AlarmHigh is double high && low >= high
+            ? "报警上限必须大于报警下限。"
+            : null;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _model = Tag?.Copy() ?? new();
+        _devices = await Devices.GetAllAsync();
+        _globalScanInterval = await Store.GetTagScanIntervalAsync(1000);
+        _existingTags = await Tags.GetAllAsync();
+        if (Tag is null)
+        {
+            if (InitialDeviceId is Guid initialId && _devices.Any(x => x.Id == initialId))
+                _model.DeviceId = initialId;
+            else if (_devices.Count(x => x.Enabled) == 1)
+                _model.DeviceId = _devices.Single(x => x.Enabled).Id;
+        }
+    }
+
+    private string? ValidateName(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return "请输入 Tag 名称。";
+        if (name.Trim().Length > 100) return "Tag 名称不能超过 100 个字符。";
+        return _existingTags.Any(x => x.Id != _model.Id &&
+            string.Equals(x.Name, name.Trim(), StringComparison.OrdinalIgnoreCase))
+            ? "Tag 名称已存在，请使用唯一名称。"
+            : null;
+    }
+
+    private void DataTypeChanged(TagDataType type)
+    {
+        _model.DataType = type;
+        if (type == TagDataType.String)
+        {
+            _model.AccessMode = AccessMode.ReadOnly;
+            _model.AlarmHigh = null;
+            _model.AlarmLow = null;
+            _model.AlarmDeadband = 0;
+            _model.MinValue = null;
+            _model.MaxValue = null;
+            _model.Scale = 1;
+            _model.Offset = 0;
+        }
+        if (IsReadOnly) _model.AccessMode = AccessMode.ReadOnly;
+    }
+
+    private void AddressChanged(AddressType type)
+    {
+        _model.AddressType = type;
+        if (!CompatibleTypes.Contains(_model.DataType)) _model.DataType = IsBit ? TagDataType.Bool : TagDataType.UInt16;
+        if (IsReadOnly) _model.AccessMode = AccessMode.ReadOnly;
+    }
+
+    private async Task SaveAsync()
+    {
+        _saving = true;
+        try { await Tags.SaveAsync(_model); Toast.Add("Tag 已保存", Severity.Success); Dialog.Close(DialogResult.Ok(true)); }
+        catch (Exception ex) { Toast.Add(ex.Message, Severity.Error); }
+        finally { _saving = false; }
+    }
+}

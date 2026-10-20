@@ -1,0 +1,245 @@
+@inject ManualOutputService ManualOutputs
+
+<MudDialog>
+    <DialogContent>
+        <MudAlert Severity="Severity.Info" Dense Class="mb-3">
+            控制 Tag 负责按住写入 1、松开写入 0；状态监控 Tag 仅用于读取。未设置监控 Tag 时，状态跟随控制 Tag。
+        </MudAlert>
+        @if (_error is not null)
+        {
+            <MudAlert Severity="Severity.Error" Dense Class="mb-3">@_error</MudAlert>
+        }
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate Color="Color.Primary" />
+        }
+        else
+        {
+            <MudTextField T="string" @bind-Value="_name" Label="按钮名称"
+                          Variant="Variant.Outlined" Margin="Margin.Dense"
+                          MaxLength="80" Immediate="true" AutoFocus="true" />
+
+            <MudDivider Class="my-4" />
+
+            <MudText Typo="Typo.subtitle2" Class="mb-2">控制输出</MudText>
+            <MudSelect T="Guid?" Value="_controlSelection" ValueChanged="ChangeControlSelection"
+                       Label="控制 Tag" Variant="Variant.Outlined" Margin="Margin.Dense">
+                <MudSelectItem T="Guid?" Value="@((Guid?)null)">未绑定</MudSelectItem>
+                @if (_currentBinding?.Tag is { } current && !_eligibleTags.Any(x => x.Id == current.Id))
+                {
+                    <MudSelectItem T="Guid?" Value="@((Guid?)current.Id)" Disabled="true">
+                        @current.Name · 当前控制 Tag 不可用
+                    </MudSelectItem>
+                }
+                @foreach (var tag in _eligibleTags)
+                {
+                    <MudSelectItem T="Guid?" Value="@((Guid?)tag.Id)"
+                                   Disabled="@(!IsControlTagAvailable(tag))">
+                        @tag.Name · @GetAddressLabel(tag)@(IsUsedElsewhere(tag) ? " · 已被其他按钮占用" : "")
+                    </MudSelectItem>
+                }
+            </MudSelect>
+
+            @if (_controlSelection is Guid selectedId &&
+                 _eligibleTags.FirstOrDefault(x => x.Id == selectedId) is Tag selectedTag)
+            {
+                <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-2">
+                    控制地址：@GetAddressLabel(selectedTag)；按住写入 1，松开写入 0。
+                </MudText>
+            }
+            else
+            {
+                <MudText Typo="Typo.caption" Color="Color.Warning" Class="mt-2">
+                    当前未绑定可用 Tag，按钮将保持禁用。
+                </MudText>
+            }
+
+            <MudDivider Class="my-4" />
+
+            <MudText Typo="Typo.subtitle2" Class="mb-2">状态监控（可选）</MudText>
+            <MudSelect T="Guid?" Value="_monitorSelection" ValueChanged="ChangeMonitorSelection"
+                       Label="状态监控 Tag" Variant="Variant.Outlined" Margin="Margin.Dense">
+                <MudSelectItem T="Guid?" Value="@((Guid?)null)">不单独设置，跟随控制 Tag</MudSelectItem>
+                @if (_currentBinding?.MonitorTag is { } currentMonitor &&
+                     !_eligibleMonitorTags.Any(x => x.Id == currentMonitor.Id))
+                {
+                    <MudSelectItem T="Guid?" Value="@((Guid?)currentMonitor.Id)" Disabled="true">
+                        @currentMonitor.Name · 当前监控 Tag 不可用
+                    </MudSelectItem>
+                }
+                @foreach (var tag in _eligibleMonitorTags)
+                {
+                    <MudSelectItem T="Guid?" Value="@((Guid?)tag.Id)"
+                                   Disabled="@(!IsMonitorTagAvailable(tag))">
+                        @tag.Name · @GetAddressLabel(tag)@(IsUsedElsewhere(tag) ? " · 已被其他按钮占用" : "")
+                    </MudSelectItem>
+                }
+            </MudSelect>
+            @if (_monitorSelection is Guid monitorId &&
+                 _eligibleMonitorTags.FirstOrDefault(x => x.Id == monitorId) is Tag monitorTag)
+            {
+                <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-2">
+                    状态只从 @GetAddressLabel(monitorTag) 读取，不会向该 Tag 写入。
+                </MudText>
+            }
+            else
+            {
+                <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-2">
+                    当前读取地址与控制 Tag 相同。
+                </MudText>
+            }
+
+            <MudDivider Class="my-4" />
+
+            <MudText Typo="Typo.subtitle2" Class="mb-2">操作模式</MudText>
+            <MudSelect T="ManualOutputMode" @bind-Value="_outputMode"
+                       Label="按钮操作模式" Variant="Variant.Outlined" Margin="Margin.Dense">
+                <MudSelectItem Value="ManualOutputMode.Hold">保持（按住写入 1，松开写入 0）</MudSelectItem>
+                <MudSelectItem Value="ManualOutputMode.Pulse">脉冲（点击写入 1，N 毫秒后自动写入 0）</MudSelectItem>
+            </MudSelect>
+            @if (_outputMode == ManualOutputMode.Pulse)
+            {
+                <MudNumericField T="int" @bind-Value="_pulseDurationMs"
+                                 Label="脉冲时长（ms）" Min="50" Max="10000"
+                                 Variant="Variant.Outlined" Margin="Margin.Dense" Class="mt-3" />
+                <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-2">
+                    脉冲由服务端保证：写入 1 后等待设定时长并自动复位写 0；即使浏览器断开也会尝试复位。
+                    适用于扫码启动、相机拍照、打点等触发型输出。
+                </MudText>
+            }
+            else
+            {
+                <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-2">
+                    按住写入 1、松开写入 0，适用于气缸等保持型输出。
+                </MudText>
+            }
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Disabled="@(_saving || _loading)">取消</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                   OnClick="SaveAsync" Disabled="@(_saving || _loading || string.IsNullOrWhiteSpace(_name))">
+            @(_saving ? "保存中…" : "保存")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] public IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public Guid DeviceId { get; set; }
+    [Parameter] public Guid? OutputPointId { get; set; }
+    [Parameter] public string InitialName { get; set; } = "";
+    [Parameter] public Guid? InitialTagId { get; set; }
+    [Parameter] public Guid? InitialMonitorTagId { get; set; }
+
+    private ManualOutputService.OutputBinding? _currentBinding;
+    private IReadOnlyList<ManualOutputService.OutputBinding> _bindings = [];
+    private IReadOnlyList<Tag> _eligibleTags = [];
+    private IReadOnlyList<Tag> _eligibleMonitorTags = [];
+    private Guid? _controlSelection;
+    private Guid? _monitorSelection;
+    private string _name = "";
+    private ManualOutputMode _outputMode = ManualOutputMode.Hold;
+    private int _pulseDurationMs = 300;
+    private bool _loading = true;
+    private bool _saving;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _name = InitialName;
+        _controlSelection = InitialTagId;
+        _monitorSelection = InitialMonitorTagId;
+        try
+        {
+            _eligibleTags = await ManualOutputs.GetEligibleTagsAsync(DeviceId);
+            _eligibleMonitorTags = await ManualOutputs.GetEligibleMonitorTagsAsync(DeviceId);
+            _bindings = await ManualOutputs.GetOutputBindingsAsync(DeviceId);
+            if (OutputPointId is Guid outputPointId)
+            {
+                _currentBinding = _bindings.SingleOrDefault(x => x.Point.Id == outputPointId)
+                    ?? throw new InvalidOperationException("找不到该输出按钮。");
+                _controlSelection = _currentBinding.Tag?.Id;
+                _monitorSelection = _currentBinding.MonitorTag?.Id;
+                _outputMode = _currentBinding.Point.OutputMode;
+                _pulseDurationMs = _currentBinding.Point.PulseDurationMs is >= 50 and <= 10000
+                    ? _currentBinding.Point.PulseDurationMs
+                    : 300;
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void ChangeControlSelection(Guid? tagId)
+    {
+        _controlSelection = tagId;
+        _error = null;
+    }
+
+    private void ChangeMonitorSelection(Guid? tagId)
+    {
+        _monitorSelection = tagId;
+        _error = null;
+    }
+
+    private bool IsUsedElsewhere(Tag candidate)
+        => _bindings.Any(binding => binding.Point.Id != OutputPointId &&
+            new[] { binding.Tag, binding.MonitorTag }
+                .Any(other => other is not null && SameTagOrAddress(candidate, other)));
+
+    private bool IsControlTagAvailable(Tag candidate)
+        => !IsUsedElsewhere(candidate) &&
+           !ConflictsWithSelection(candidate, _monitorSelection, _eligibleMonitorTags);
+
+    private bool IsMonitorTagAvailable(Tag candidate)
+        => !IsUsedElsewhere(candidate) &&
+           !ConflictsWithSelection(candidate, _controlSelection, _eligibleTags);
+
+    private static bool ConflictsWithSelection(Tag candidate, Guid? selectedId, IReadOnlyList<Tag> tags)
+    {
+        var selected = selectedId is Guid id ? tags.FirstOrDefault(x => x.Id == id) : null;
+        return selected is not null && SameTagOrAddress(candidate, selected);
+    }
+
+    private static bool SameTagOrAddress(Tag left, Tag right)
+        => left.Id == right.Id ||
+           left.AddressType == right.AddressType && left.Address == right.Address;
+
+    private static string GetAddressLabel(Tag tag)
+        => tag.AddressType == AddressType.DiscreteInput
+            ? $"DI[{tag.Address}]"
+            : $"Coil[{tag.Address}]";
+
+    private async Task SaveAsync()
+    {
+        if (_saving || _loading || string.IsNullOrWhiteSpace(_name)) return;
+        _saving = true;
+        _error = null;
+        try
+        {
+            await ManualOutputs.SaveOutputPointConfigurationAsync(
+                DeviceId, OutputPointId, _name, _controlSelection,
+                monitorTagId: _monitorSelection,
+                outputMode: _outputMode,
+                pulseDurationMs: _pulseDurationMs);
+            Dialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private void Cancel() => Dialog.Cancel();
+}

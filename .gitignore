@@ -1,0 +1,12 @@
+**/bin/
+**/obj/
+**/App_Data/
+**/logs/
+.vs/
+.work/
+.workbuddy/
+artifacts/
+*.user
+*.db
+*.db-wal
+*.db-shm

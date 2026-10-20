@@ -1,0 +1,63 @@
+.tags-filter-summary {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 38px;
+    margin-bottom: 8px;
+    color: var(--mud-palette-text-secondary);
+}
+
+.tags-filter-summary strong {
+    color: var(--mud-palette-text-primary);
+    font-variant-numeric: tabular-nums;
+}
+
+.tags-filter-summary button {
+    margin-left: auto;
+}
+
+@media (max-width: 560px) {
+    .tags-filter-summary {
+        flex-wrap: wrap;
+        gap: 6px 9px;
+    }
+
+    .tags-filter-summary button {
+        margin-left: 0;
+    }
+}
+
+.tag-import-input {
+    display: none;
+}
+
+.tag-import-button,
+.tag-export-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 36px;
+    padding: 0 10px;
+    border: 1px solid var(--mud-palette-divider);
+    border-radius: 7px;
+    color: var(--mud-palette-text-primary);
+    background: var(--mud-palette-surface);
+    cursor: pointer;
+    text-decoration: none;
+    font-size: 12px;
+    white-space: nowrap;
+    transition: border-color .15s ease, background-color .15s ease;
+}
+
+.tag-import-button:hover,
+.tag-export-button:hover {
+    border-color: var(--mud-palette-primary);
+    background: color-mix(in srgb, var(--mud-palette-primary) 8%, var(--mud-palette-surface));
+}
+
+.tag-import-button:focus-visible,
+.tag-export-button:focus-visible {
+    outline: 2px solid var(--mud-palette-primary);
+    outline-offset: 2px;
+}

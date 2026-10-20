@@ -1,0 +1,38 @@
+.recipe-history-list {
+    max-height: min(64vh, 620px);
+    overflow-y: auto;
+}
+
+.recipe-history-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 16px;
+    margin-bottom: 10px;
+    color: var(--mud-palette-text-secondary);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.recipe-history-table {
+    max-height: min(38vh, 360px);
+    overflow: auto;
+}
+
+.recipe-history-pagination {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 12px;
+}
+
+@media (max-width: 600px) {
+    .recipe-history-list {
+        max-height: 62vh;
+    }
+
+    .recipe-history-table {
+        max-height: 42vh;
+    }
+}

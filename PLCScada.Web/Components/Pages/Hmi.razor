@@ -1,0 +1,422 @@
+@page "/hmi"
+@inherits LivePage
+@inject HmiService HmiConfig
+@inject IDialogService Dialogs
+@inject ISnackbar Toast
+
+<PageTitle>监控画面 · PLCScada</PageTitle>
+<PageHeading Section="HMI" title="测试数据监控" Description="运行状态 · 质量判定 · 测试测量值">
+    <MudChip T="string" Variant="Variant.Outlined" Color="Color.Primary"
+             Icon="@Icons.Material.Outlined.Visibility">
+        只读 · @_displayItems.Count 展示项
+    </MudChip>
+</PageHeading>
+
+@if (LoadError is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4">@LoadError</MudAlert>
+}
+else
+{
+    <div class="hmi-toolbar">
+        <MudText Typo="Typo.body2">画面展示项 · @_displayItems.Count</MudText>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                   StartIcon="@Icons.Material.Outlined.Add"
+                   OnClick="() => EditControlAsync(null)">
+            新增展示项
+        </MudButton>
+    </div>
+
+    @if (_displayItems.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info" Dense Class="mb-4">
+            当前画面没有展示项。点击“新增展示项”，选择启用的只读数值寄存器 Tag，即可配置 HMI。
+        </MudAlert>
+    }
+    else
+    {
+        <div class="hmi-dashboard">
+            @if (StatusItem is not null || TotalResultItem is not null)
+            {
+                <div class="hmi-overview-grid @(_displayItems.Count(item => item.Type is HmiDisplayType.Status or HmiDisplayType.TotalResult) == 1 ? "is-single" : "")">
+                    @if (StatusItem is { } statusItem)
+                    {
+                        var status = Runtime.GetTagSnapshot(statusItem.Tag.Id);
+                        <section class="hmi-state-panel @GetStateClass(status)">
+                            <div class="hmi-control-actions hmi-control-actions--panel">
+                                <MudTooltip Text="配置展示名称与 Tag">
+                                    <MudIconButton Icon="@Icons.Material.Outlined.Settings"
+                                                   Size="Size.Small" aria-label="@($"配置{statusItem.Control.Name}")"
+                                                   OnClick="() => EditControlAsync(statusItem)" />
+                                </MudTooltip>
+                                <MudTooltip Text="移除展示项">
+                                    <MudIconButton Icon="@Icons.Material.Outlined.DeleteOutline"
+                                                   Color="Color.Error" Size="Size.Small"
+                                                   aria-label="@($"删除{statusItem.Control.Name}")"
+                                                   OnClick="() => DeleteControlAsync(statusItem)" />
+                                </MudTooltip>
+                            </div>
+                            <div class="hmi-state-primary">
+                                <div class="hmi-overline">
+                                    <MudIcon Icon="@Icons.Material.Outlined.Memory" Size="Size.Small" />
+                                    PLC STATUS / @GetAddressLabel(statusItem.Tag)
+                                </div>
+                                <h2>@statusItem.Control.Name</h2>
+                                <div class="hmi-state-value">@GetStateLabel(status)</div>
+                                <div class="hmi-state-foot">
+                                    <span class="hmi-quality @GetQualityClass(status)">
+                                        <span class="hmi-quality-dot"></span>@GetQualityLabel(status.Quality)
+                                    </span>
+                                    <span class="hmi-state-code">原始值 <strong>@GetCodeText(status)</strong></span>
+                                    <span class="hmi-timestamp">@GetTimestamp(status)</span>
+                                </div>
+                            </div>
+                            <div class="hmi-state-map">
+                                <div class="hmi-map-heading">
+                                    <span>状态码对照</span>
+                                    <span>@(statusItem.Tag.Device?.Name ?? "未关联设备")</span>
+                                </div>
+                                <div class="hmi-state-options">
+                                    @foreach (var (code, label) in StateLabels)
+                                    {
+                                        <div class="hmi-state-option @GetStateOptionClass(code, status)">
+                                            <span class="hmi-option-code">@(code.ToString("00"))</span>
+                                            <span>@label</span>
+                                        </div>
+                                    }
+                                </div>
+                                @if (HasUnmappedState(status))
+                                {
+                                    <MudAlert Severity="Severity.Warning" Dense Class="hmi-unmapped-state">
+                                        当前 PLC 值尚无状态名称映射，请核对设备状态码表。原始值：<strong>@GetCodeText(status)</strong>
+                                    </MudAlert>
+                                }
+                            </div>
+                        </section>
+                    }
+
+                    @if (TotalResultItem is { } totalResultItem)
+                    {
+                        var totalResult = Runtime.GetTagSnapshot(totalResultItem.Tag.Id);
+                        <section class="hmi-total-panel @GetResultClass(totalResult)">
+                            <div class="hmi-control-actions hmi-control-actions--panel">
+                                <MudTooltip Text="配置展示名称与 Tag">
+                                    <MudIconButton Icon="@Icons.Material.Outlined.Settings"
+                                                   Size="Size.Small" aria-label="@($"配置{totalResultItem.Control.Name}")"
+                                                   OnClick="() => EditControlAsync(totalResultItem)" />
+                                </MudTooltip>
+                                <MudTooltip Text="移除展示项">
+                                    <MudIconButton Icon="@Icons.Material.Outlined.DeleteOutline"
+                                                   Color="Color.Error" Size="Size.Small"
+                                                   aria-label="@($"删除{totalResultItem.Control.Name}")"
+                                                   OnClick="() => DeleteControlAsync(totalResultItem)" />
+                                </MudTooltip>
+                            </div>
+                            <div class="hmi-total-meta">
+                                <span class="hmi-overline">
+                                    <MudIcon Icon="@Icons.Material.Outlined.FactCheck" Size="Size.Small" />
+                                    OVERALL RESULT / @GetAddressLabel(totalResultItem.Tag)
+                                </span>
+                                <span class="hmi-quality @GetQualityClass(totalResult)">
+                                    <span class="hmi-quality-dot"></span>@GetQualityLabel(totalResult.Quality)
+                                </span>
+                            </div>
+                            <div class="hmi-total-content">
+                                <div>
+                                    <h2>@totalResultItem.Control.Name</h2>
+                                    <div class="hmi-total-value">@GetResultLabel(totalResult)</div>
+                                </div>
+                                <div class="hmi-total-code">
+                                    <span>PLC 原始值</span>
+                                    <strong>@GetCodeText(totalResult)</strong>
+                                </div>
+                            </div>
+                            <div class="hmi-total-foot">
+                                <span>最终测试结论</span>
+                                <span>@GetTimestamp(totalResult)</span>
+                            </div>
+                            <div class="hmi-total-legend">
+                                <span><i class="is-ok"></i>1 · OK</span>
+                                <span><i class="is-ng"></i>2 · NG</span>
+                            </div>
+                        </section>
+                    }
+                </div>
+            }
+
+            @if (_resultItems.Count > 0)
+            {
+                <section class="hmi-section">
+                    <div class="hmi-section-heading">
+                        <div>
+                            <span class="hmi-section-index">01 / TEST CHECKS</span>
+                            <h2>单项判定</h2>
+                            <p>1 = OK <span class="hmi-legend-separator">/</span> 2 = NG</p>
+                        </div>
+                        <span class="hmi-section-count">@_resultItems.Count 点位</span>
+                    </div>
+                    <div class="hmi-result-grid">
+                        @foreach (var item in _resultItems)
+                        {
+                            var snapshot = Runtime.GetTagSnapshot(item.Tag.Id);
+                            <article @key="item.Control.Id" class="hmi-result-card @GetResultClass(snapshot)">
+                                <div class="hmi-card-meta">
+                                    <span class="hmi-address">@GetAddressLabel(item.Tag)</span>
+                                    <div class="hmi-item-actions">
+                                        <span class="hmi-quality @GetQualityClass(snapshot)">
+                                            <span class="hmi-quality-dot"></span>@GetQualityLabel(snapshot.Quality)
+                                        </span>
+                                        <MudIconButton Icon="@Icons.Material.Outlined.Settings" Size="Size.Small"
+                                                       aria-label="@($"配置{item.Control.Name}")"
+                                                       OnClick="() => EditControlAsync(item)" />
+                                        <MudIconButton Icon="@Icons.Material.Outlined.DeleteOutline" Size="Size.Small"
+                                                       Color="Color.Error"
+                                                       aria-label="@($"删除{item.Control.Name}")"
+                                                       OnClick="() => DeleteControlAsync(item)" />
+                                    </div>
+                                </div>
+                                <h3>@item.Control.Name</h3>
+                                <div class="hmi-result-reading">
+                                    <span class="hmi-result-label">@GetResultLabel(snapshot)</span>
+                                    <span class="hmi-result-code">@GetCodeText(snapshot)</span>
+                                </div>
+                                <div class="hmi-card-time">@GetTimestamp(snapshot)</div>
+                            </article>
+                        }
+                    </div>
+                </section>
+            }
+
+            @if (_measurementGroups.Count > 0)
+            {
+                <section class="hmi-section">
+                    <div class="hmi-section-heading">
+                        <div>
+                            <span class="hmi-section-index">02 / MEASUREMENTS</span>
+                            <h2>测试测量值</h2>
+                            <p>Float32 <span class="hmi-legend-separator">/</span> 3 位小数</p>
+                        </div>
+                        <span class="hmi-section-count">@_measurementItems.Count 点位</span>
+                    </div>
+                    <div class="hmi-measurement-groups">
+                        @foreach (var group in _measurementGroups)
+                        {
+                            <div @key="group.Key" class="hmi-measurement-group">
+                                <div class="hmi-group-heading">
+                                    <h3>@group.Key</h3>
+                                    <span>@group.Count() 点位</span>
+                                </div>
+                                <div class="hmi-measurement-list">
+                                    @foreach (var item in group)
+                                    {
+                                        var snapshot = Runtime.GetTagSnapshot(item.Tag.Id);
+                                        <article @key="item.Control.Id" class="hmi-measure-card">
+                                            <div class="hmi-measure-name">
+                                                <div>
+                                                    <h4>@item.Control.Name</h4>
+                                                    <span class="hmi-address">@GetAddressRange(item.Tag)</span>
+                                                </div>
+                                                <div class="hmi-item-actions">
+                                                    <span class="hmi-quality @GetQualityClass(snapshot)"
+                                                          title="@GetQualityLabel(snapshot.Quality)">
+                                                        <span class="hmi-quality-dot"></span>
+                                                    </span>
+                                                    <MudIconButton Icon="@Icons.Material.Outlined.Settings" Size="Size.Small"
+                                                                   aria-label="@($"配置{item.Control.Name}")"
+                                                                   OnClick="() => EditControlAsync(item)" />
+                                                    <MudIconButton Icon="@Icons.Material.Outlined.DeleteOutline" Size="Size.Small"
+                                                                   Color="Color.Error"
+                                                                   aria-label="@($"删除{item.Control.Name}")"
+                                                                   OnClick="() => DeleteControlAsync(item)" />
+                                                </div>
+                                            </div>
+                                            <div class="hmi-measure-reading">
+                                                <strong>@GetValueText(item.Tag, snapshot)</strong>
+                                                @if (!string.IsNullOrWhiteSpace(item.Tag.Unit))
+                                                {
+                                                    <span>@item.Tag.Unit</span>
+                                                }
+                                            </div>
+                                            <div class="hmi-card-time">@GetTimestamp(snapshot)</div>
+                                        </article>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    </div>
+                </section>
+            }
+        </div>
+    }
+}
+
+@code {
+    private static readonly (int Code, string Label)[] StateLabels =
+    [
+        (1, "设备待机"), (2, "设备运行"), (3, "测试 OK"),
+        (4, "测试 NG"), (5, "急停按下"), (6, "扫码错误"), (7, "电压超限")
+    ];
+
+    private IReadOnlyList<HmiService.DisplayItem> _displayItems = [];
+    private HmiService.DisplayItem? StatusItem
+        => _displayItems.FirstOrDefault(item => item.Type == HmiDisplayType.Status);
+    private HmiService.DisplayItem? TotalResultItem
+        => _displayItems.FirstOrDefault(item => item.Type == HmiDisplayType.TotalResult);
+    private IReadOnlyList<HmiService.DisplayItem> _resultItems
+        => _displayItems.Where(item => item.Type == HmiDisplayType.Result).ToArray();
+    private IReadOnlyList<HmiService.DisplayItem> _measurementItems
+        => _displayItems.Where(item => item.Type == HmiDisplayType.Measurement).ToArray();
+    private IReadOnlyList<IGrouping<string, HmiService.DisplayItem>> _measurementGroups
+        => _measurementItems
+            .GroupBy(item => string.IsNullOrWhiteSpace(item.Group) ? "其他" : item.Group)
+            .ToArray();
+
+    protected override async Task RefreshAsync()
+        => _displayItems = await HmiConfig.GetDisplayItemsAsync();
+
+    private async Task EditControlAsync(HmiService.DisplayItem? item)
+    {
+        var dialog = await Dialogs.ShowAsync<HmiControlDialog>(
+            item is null ? "新增 HMI 展示项" : "配置 HMI 展示项",
+            new DialogParameters<HmiControlDialog> { { x => x.Item, item } },
+            new() { FullWidth = true, MaxWidth = MaxWidth.Small, CloseButton = true });
+        var result = await dialog.Result;
+        if (result is { Canceled: false })
+        {
+            Toast.Add(item is null ? "HMI 展示项已新增" : "HMI 展示项已更新", Severity.Success);
+            await RefreshAsync();
+        }
+    }
+
+    private async Task DeleteControlAsync(HmiService.DisplayItem item)
+    {
+        if (await Dialogs.ShowMessageBox(
+                "移除 HMI 展示项",
+                $"确定从 HMI 画面移除“{item.Control.Name}”吗？底层 Tag“{item.Tag.Name}”会保留。",
+                yesText: "移除", cancelText: "取消") != true)
+            return;
+
+        try
+        {
+            await HmiConfig.DeleteControlAsync(item.Control.Id);
+            Toast.Add($"展示项“{item.Control.Name}”已移除，Tag 未删除", Severity.Success);
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"移除展示项失败：{ex.Message}", Severity.Error);
+        }
+    }
+
+    private static double? GetNumber(TagSnapshot snapshot)
+        => snapshot.CurrentValue is double value && double.IsFinite(value) ? value : null;
+
+    private static int? GetCode(TagSnapshot snapshot)
+    {
+        var value = GetNumber(snapshot);
+        return value is double number && number == Math.Truncate(number) &&
+               number >= int.MinValue && number <= int.MaxValue
+            ? (int)number
+            : null;
+    }
+
+    private static string GetCodeText(TagSnapshot snapshot)
+        => GetNumber(snapshot) is double value ? value.ToString("0.###") : "—";
+
+    private static string GetValueText(Tag tag, TagSnapshot snapshot)
+        => GetNumber(snapshot) is double value
+            ? tag.DataType == TagDataType.Float32 ? value.ToString("F3") : value.ToString("0.###")
+            : "—";
+
+    private static string GetAddressLabel(Tag tag)
+        => tag.AddressType == AddressType.HoldingRegister
+            ? $"D{tag.Address}"
+            : $"IR[{tag.Address}]";
+
+    private static string GetAddressRange(Tag tag)
+    {
+        var registerCount = tag.DataType switch
+        {
+            TagDataType.Float32 => 2,
+            TagDataType.Float64 => 4,
+            TagDataType.Int32 or TagDataType.UInt32 => 2,
+            _ => 1
+        };
+        var start = GetAddressLabel(tag);
+        return registerCount == 1
+            ? start
+            : $"{start}–{(tag.AddressType == AddressType.HoldingRegister ? $"D{tag.Address + registerCount - 1}" : $"IR[{tag.Address + registerCount - 1}]")}";
+    }
+
+    private static string GetStateLabel(TagSnapshot snapshot)
+    {
+        if (snapshot.Quality != TagQuality.Good)
+            return snapshot.Quality == TagQuality.Uncertain ? "等待数据" : "读取异常";
+
+        var code = GetCode(snapshot);
+        if (code is int stateCode)
+        {
+            var mapped = StateLabels.FirstOrDefault(x => x.Code == stateCode);
+            if (mapped.Label is not null)
+                return mapped.Label;
+            return $"未配置映射（代码 {stateCode}）";
+        }
+
+        return $"无法识别状态值（{GetCodeText(snapshot)}）";
+    }
+
+    private static bool HasUnmappedState(TagSnapshot snapshot)
+        => snapshot.Quality == TagQuality.Good &&
+           (GetCode(snapshot) is not int code || StateLabels.All(x => x.Code != code));
+
+    private static string GetStateClass(TagSnapshot snapshot)
+    {
+        if (snapshot.Quality != TagQuality.Good) return "is-state-fault";
+        return GetCode(snapshot) switch
+        {
+            1 => "is-state-standby",
+            2 => "is-state-running",
+            3 => "is-state-pass",
+            4 or 5 or 6 => "is-state-alarm",
+            7 => "is-state-warning",
+            _ => "is-state-unknown"
+        };
+    }
+
+    private static string GetStateOptionClass(int code, TagSnapshot snapshot)
+        => snapshot.Quality == TagQuality.Good && GetCode(snapshot) == code ? "is-active" : "";
+
+    private static string GetResultLabel(TagSnapshot snapshot)
+    {
+        if (snapshot.Quality != TagQuality.Good)
+            return snapshot.Quality == TagQuality.Uncertain ? "等待数据" : "读取异常";
+        return GetCode(snapshot) switch { 1 => "OK", 2 => "NG", _ => "未判定" };
+    }
+
+    private static string GetResultClass(TagSnapshot snapshot)
+    {
+        if (snapshot.Quality != TagQuality.Good) return "is-result-fault";
+        return GetCode(snapshot) switch { 1 => "is-result-ok", 2 => "is-result-ng", _ => "is-result-pending" };
+    }
+
+    private static string GetQualityClass(TagSnapshot snapshot)
+        => snapshot.Quality switch
+        {
+            TagQuality.Good => "is-good",
+            TagQuality.Bad => "is-bad",
+            TagQuality.Stale => "is-stale",
+            _ => "is-waiting"
+        };
+
+    private static string GetQualityLabel(TagQuality quality)
+        => quality switch
+        {
+            TagQuality.Good => "正常",
+            TagQuality.Bad => "异常",
+            TagQuality.Stale => "过期",
+            _ => "等待"
+        };
+
+    private static string GetTimestamp(TagSnapshot snapshot)
+        => snapshot.Timestamp?.ToLocalTime().ToString("HH:mm:ss") ?? "--:--:--";
+}

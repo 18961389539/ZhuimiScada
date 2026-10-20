@@ -1,0 +1,153 @@
+@inject RecipeApplyService RecipeApply
+@inject DeviceService Devices
+
+<MudDialog>
+    <DialogContent>
+        <MudAlert Severity="Severity.Info" Dense Class="mb-3">
+            读取设备当前配置并与各配方逐项比较，用于识别“当前 PLC 在用哪个配方”。只读操作，不会写入设备。
+        </MudAlert>
+        <div class="d-flex align-center flex-wrap gap-2 mb-3">
+            <MudSelect T="Guid?" Value="_deviceId" ValueChanged="ChangeDeviceAsync" Label="目标设备"
+                       Variant="Variant.Outlined" Margin="Margin.Dense" Class="search-field"
+                       Disabled="@_loading">
+                @foreach (var device in _devices.Where(x => x.Enabled))
+                {
+                    <MudSelectItem T="Guid?" Value="@((Guid?)device.Id)">@device.Name</MudSelectItem>
+                }
+            </MudSelect>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                       Disabled="@(_deviceId is null || _loading)"
+                       StartIcon="@Icons.Material.Outlined.CompareArrows" OnClick="RunAsync">
+                @(_loading ? "比对中…" : "重新比对")
+            </MudButton>
+        </div>
+
+        @if (_error is not null)
+        {
+            <MudAlert Severity="Severity.Error" Dense Class="mb-3">@_error</MudAlert>
+        }
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate Color="Color.Primary" />
+        }
+        else if (_result is not null)
+        {
+            @if (_result.BlockReason is not null)
+            {
+                <MudAlert Severity="Severity.Warning" Dense>@_result.BlockReason</MudAlert>
+            }
+            else
+            {
+                <div class="recipe-apply-endpoint">
+                    <strong>PLC 连接目标：</strong><span class="mono">@_result.DeviceEndpoint</span>
+                    <span class="ml-2" style="opacity:.7">@_result.CapturedAt.ToLocalTime().ToString("HH:mm:ss") 读取</span>
+                </div>
+                <MudTable Items="_result.Items" Dense Hover Elevation="0"
+                          Breakpoint="Breakpoint.Sm" Class="recipe-apply-table">
+                    <HeaderContent>
+                        <MudTh>配方</MudTh>
+                        <MudTh>一致项</MudTh>
+                        <MudTh>状态</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="配方">
+                            <strong>@context.RecipeName</strong>
+                            <small class="cell-secondary">v@(context.Revision)</small>
+                        </MudTd>
+                        <MudTd DataLabel="一致项" Class="mono">@context.MatchingItems / @context.TotalItems</MudTd>
+                        <MudTd DataLabel="状态">
+                            @if (context.Error is not null)
+                            {
+                                <MudTooltip Text="@context.Error">
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error">
+                                        无法比对
+                                    </MudChip>
+                                </MudTooltip>
+                            }
+                            else if (context.FullyMatches)
+                            {
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="Color.Success">
+                                    完全匹配
+                                </MudChip>
+                            }
+                            else if (context.MatchingItems == 0)
+                            {
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">无匹配</MudChip>
+                            }
+                            else
+                            {
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning">
+                                    部分一致
+                                </MudChip>
+                            }
+                        </MudTd>
+                    </RowTemplate>
+                    <NoRecordsContent><MudText Class="pa-4">没有可比较的配方。</MudText></NoRecordsContent>
+                </MudTable>
+            }
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Disabled="@_loading">关闭</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] public IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public Guid? InitialDeviceId { get; set; }
+
+    private IReadOnlyList<Device> _devices = [];
+    private Guid? _deviceId;
+    private bool _loading;
+    private string? _error;
+    private RecipeApplyService.RecipeMatchResult? _result;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _devices = await Devices.GetAllAsync();
+            _deviceId = InitialDeviceId is Guid id && _devices.Any(x => x.Id == id)
+                ? id
+                : _devices.FirstOrDefault(x => x.Enabled)?.Id;
+            if (_deviceId is not null)
+                await RunAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task ChangeDeviceAsync(Guid? id)
+    {
+        _deviceId = id;
+        _result = null;
+        _error = null;
+        if (id is not null)
+            await RunAsync();
+    }
+
+    private async Task RunAsync()
+    {
+        if (_deviceId is not Guid id || _loading)
+            return;
+        _loading = true;
+        _error = null;
+        try
+        {
+            _result = await RecipeApply.MatchRecipesForDeviceAsync(id);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            _result = null;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void Cancel() => Dialog.Cancel();
+}

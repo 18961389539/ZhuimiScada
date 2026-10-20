@@ -1,0 +1,197 @@
+@inject AlarmDefinitionService Definitions
+
+<MudDialog>
+    <DialogContent>
+        @if (_error is not null)
+        {
+            <MudAlert Severity="Severity.Error" Dense Class="mb-3">@_error</MudAlert>
+        }
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate Color="Color.Primary" />
+        }
+        else
+        {
+            <MudTextField T="string" @bind-Value="_name" Immediate="true"
+                          Label="报警名称（如：急停按下）" MaxLength="80"
+                          Variant="Variant.Outlined" Margin="Margin.Dense" AutoFocus="true" />
+            <MudTextField T="string" @bind-Value="_tagFilter" Immediate="true"
+                          Label="筛选 Tag（按点位或设备名）" Class="mt-3"
+                          Variant="Variant.Outlined" Margin="Margin.Dense" />
+            <MudSelect T="Guid?" Value="_tagId" ValueChanged="ChangeTag" Label="监控 Tag"
+                       Variant="Variant.Outlined" Margin="Margin.Dense" Class="mt-2">
+                @foreach (var tag in FilteredTags())
+                {
+                    <MudSelectItem T="Guid?" Value="@((Guid?)tag.Id)">
+                        @GetDevicePrefix(tag)@tag.Name · @(tag.AddressType)[@(tag.Address)] @tag.DataType
+                    </MudSelectItem>
+                }
+            </MudSelect>
+            <MudText Typo="Typo.caption" Class="mt-1" Style="opacity:.7">
+                提示：M 点位应建模为 Coil + Bool；故障码/状态字用整数类型（Int16/UInt16/Int32/UInt32），浮点值请用限值报警。
+            </MudText>
+
+            <MudRadioGroup T="AlarmDefinitionKind" Value="_kind" ValueChanged="ChangeKind" Class="mt-3">
+                <MudRadio T="AlarmDefinitionKind" Value="AlarmDefinitionKind.Bit" Color="Color.Primary">
+                    位报警（Bool 等于指定值）
+                </MudRadio>
+                <MudRadio T="AlarmDefinitionKind" Value="AlarmDefinitionKind.Enum" Color="Color.Primary">
+                    枚举报警（数值命中集合）
+                </MudRadio>
+            </MudRadioGroup>
+
+            @if (_kind == AlarmDefinitionKind.Bit)
+            {
+                <MudSelect T="bool" @bind-Value="_bitTarget" Label="触发值"
+                           Variant="Variant.Outlined" Margin="Margin.Dense" Class="mt-3">
+                    <MudSelectItem Value="true">1（置位触发）</MudSelectItem>
+                    <MudSelectItem Value="false">0（复位触发）</MudSelectItem>
+                </MudSelect>
+            }
+            else
+            {
+                <MudTextField T="string" @bind-Value="_enumValues" Immediate="true"
+                              Label="命中数值（如 5,6 或 5=急停, 6=堵转）"
+                              Variant="Variant.Outlined" Margin="Margin.Dense" Class="mt-3" />
+            }
+
+            <div class="d-flex flex-wrap gap-3 mt-3">
+                <MudSelect T="string" @bind-Value="_severity" Label="级别"
+                           Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1">
+                    <MudSelectItem Value="@("Error")">错误（Error）</MudSelectItem>
+                    <MudSelectItem Value="@("Warning")">警告（Warning）</MudSelectItem>
+                    <MudSelectItem Value="@("Info")">提示（Info）</MudSelectItem>
+                </MudSelect>
+                <MudNumericField T="int" @bind-Value="_delaySeconds" Label="持续秒数（去抖）"
+                                 Min="0" Max="3600" Variant="Variant.Outlined"
+                                 Margin="Margin.Dense" Class="flex-grow-1" />
+            </div>
+
+            <MudTextField T="string" @bind-Value="_message" Immediate="true" MaxLength="200"
+                          Label="报警消息" HelperText="支持 {tagName}、{value}、{label}（枚举文案）占位符"
+                          Variant="Variant.Outlined" Margin="Margin.Dense" Class="mt-3" />
+            <MudSwitch T="bool" @bind-Value="_enabled" Color="Color.Primary"
+                       Label="启用该报警定义" Class="mt-2" />
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Disabled="@_saving">取消</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                   Disabled="@(_saving || _loading || _tagId is null || string.IsNullOrWhiteSpace(_name))"
+                   OnClick="SaveAsync">
+            @(_saving ? "保存中…" : "保存")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] public IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public AlarmDefinition? Item { get; set; }
+
+    private IReadOnlyList<Tag> _tags = [];
+    private string _tagFilter = "";
+    private Guid? _tagId;
+    private string _name = "";
+    private AlarmDefinitionKind _kind = AlarmDefinitionKind.Bit;
+    private bool _bitTarget = true;
+    private string _enumValues = "";
+    private string _severity = "Warning";
+    private int _delaySeconds;
+    private string _message = "{tagName}：{value}";
+    private bool _enabled = true;
+    private bool _loading = true;
+    private bool _saving;
+    private string? _error;
+
+    private IEnumerable<Tag> FilteredTags()
+    {
+        var term = _tagFilter.Trim();
+        return _tags
+            .OrderBy(x => x.Device?.Name, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+            .Where(x => term.Length == 0 ||
+                        x.Name.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                        (x.Device?.Name.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false));
+    }
+
+    private static string GetDevicePrefix(Tag tag)
+        => string.IsNullOrWhiteSpace(tag.Device?.Name) ? "" : $"{tag.Device.Name} · ";
+
+    protected override async Task OnInitializedAsync()
+    {
+        _name = Item?.Name ?? "";
+        try
+        {
+            _tags = await Definitions.GetTagsAsync();
+            if (Item is { } item)
+            {
+                _tagId = item.TagId;
+                _kind = item.Kind;
+                _bitTarget = item.BitTarget;
+                _enumValues = item.EnumValues;
+                _severity = item.Severity;
+                _delaySeconds = item.DelaySeconds;
+                _message = item.Message;
+                _enabled = item.Enabled;
+            }
+            else
+            {
+                _tagId = _tags.FirstOrDefault()?.Id;
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void ChangeTag(Guid? id)
+    {
+        _tagId = id;
+        _error = null;
+    }
+
+    private void ChangeKind(AlarmDefinitionKind kind)
+    {
+        _kind = kind;
+        _error = null;
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_saving || _tagId is not Guid tagId) return;
+        _saving = true;
+        _error = null;
+        try
+        {
+            await Definitions.SaveAsync(new AlarmDefinition
+            {
+                Id = Item?.Id ?? Guid.NewGuid(),
+                TagId = tagId,
+                Name = _name,
+                Kind = _kind,
+                BitTarget = _bitTarget,
+                EnumValues = _enumValues,
+                Severity = _severity,
+                Message = _message,
+                DelaySeconds = _delaySeconds,
+                Enabled = _enabled
+            });
+            Dialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private void Cancel() => Dialog.Cancel();
+}

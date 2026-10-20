@@ -1,0 +1,79 @@
+@inject ISnackbar Toast
+
+<MudDialog>
+    <DialogContent>
+        @if (Alarm is null)
+        {
+            <MudText>报警不存在或已被清理。</MudText>
+        }
+        else
+        {
+            <div class="d-flex align-center flex-wrap gap-2 mb-3">
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Filled"
+                         Color="@GetPriorityColor(Alarm.Priority)">@Alarm.Priority</MudChip>
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                         Color="@GetStatusColor(Alarm.Status)">@GetStatusLabel(Alarm.Status)</MudChip>
+                @if (Alarm.RepeatCount > 1)
+                {
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Warning">
+                        60 秒内重复 ×@Alarm.RepeatCount
+                    </MudChip>
+                }
+            </div>
+            <MudText Typo="Typo.body1" Class="mb-3">@Alarm.Message</MudText>
+            <MudSimpleTable Dense Elevation="0">
+                <tbody>
+                    <tr><td style="width: 96px">设备</td><td>@DeviceName</td></tr>
+                    <tr><td>来源</td><td>@SourceLabel <span class="mono" style="opacity:.6">@Alarm.Source</span></td></tr>
+                    <tr><td>发生时间</td><td class="mono">@Alarm.OccurredAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</td></tr>
+                    <tr><td>确认时间</td><td class="mono">@(Alarm.AcknowledgedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "—")</td></tr>
+                    <tr><td>确认备注</td><td>@(Alarm.AcknowledgeNote ?? "—")</td></tr>
+                    <tr><td>恢复时间</td><td class="mono">@(Alarm.ClearedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "—")</td></tr>
+                    <tr>
+                        <td>搁置</td>
+                        <td>@(Alarm.ShelvedUntil is { } until
+                            ? $"{until.ToLocalTime():HH:mm} 到期 · {Alarm.ShelveReason}"
+                            : "—")</td>
+                    </tr>
+                </tbody>
+            </MudSimpleTable>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Close">关闭</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] public IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public AlarmRecord? Alarm { get; set; }
+    [Parameter] public string DeviceName { get; set; } = "—";
+    [Parameter] public string SourceLabel { get; set; } = "";
+
+    private static Color GetPriorityColor(AlarmPriority priority) => priority switch
+    {
+        AlarmPriority.P1 => Color.Error,
+        AlarmPriority.P2 => Color.Warning,
+        AlarmPriority.P3 => Color.Info,
+        _ => Color.Default
+    };
+
+    private static Color GetStatusColor(AlarmStatus status) => status switch
+    {
+        AlarmStatus.Active => Color.Error,
+        AlarmStatus.Acknowledged => Color.Warning,
+        AlarmStatus.ClearedUnacknowledged => Color.Info,
+        _ => Color.Default
+    };
+
+    private static string GetStatusLabel(AlarmStatus status) => status switch
+    {
+        AlarmStatus.Active => "未确认",
+        AlarmStatus.Acknowledged => "已确认",
+        AlarmStatus.ClearedUnacknowledged => "已恢复未确认",
+        AlarmStatus.Cleared => "已解除",
+        _ => "未知"
+    };
+
+    private void Close() => Dialog.Close();
+}

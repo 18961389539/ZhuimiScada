@@ -1,0 +1,610 @@
+@page "/manual"
+@inherits LivePage
+@inject ManualOutputService ManualOutputs
+@inject ISnackbar Toast
+@inject IDialogService Dialogs
+@inject PageUiState PageState
+
+<PageTitle>手动操作 · PLCScada</PageTitle>
+    <PageHeading Section="MANUAL" title="手动操作" Description="按住输出按钮置位，松开后自动复位。按钮 Tag 可按设备配置。" />
+
+<MudPaper Outlined Elevation="0" Class="manual-device-panel">
+    <div class="manual-device-select">
+        <MudSelect T="Guid?" Value="_selectedDeviceId" ValueChanged="ChangeDeviceAsync"
+                   Label="目标设备" Variant="Variant.Outlined" Margin="Margin.Dense"
+                   Disabled="@HasActiveOutputs">
+            @foreach (var device in _devices.Where(x => x.Enabled))
+            {
+                <MudSelectItem T="Guid?" Value="@((Guid?)device.Id)">@device.Name</MudSelectItem>
+            }
+        </MudSelect>
+    </div>
+    <div class="manual-connection">
+        <span class="manual-connection-label">设备通信</span>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@ConnectionColor">@ConnectionLabel</MudChip>
+    </div>
+</MudPaper>
+
+@if (_devices.Count == 0)
+{
+    <MudAlert Severity="Severity.Info" Class="mt-4">暂无设备，请先在“设备管理”中配置 Modbus TCP 设备。</MudAlert>
+}
+else if (!_devices.Any(x => x.Enabled))
+{
+    <MudAlert Severity="Severity.Warning" Class="mt-4">没有已启用的设备可供控制。</MudAlert>
+}
+else if (_selectedDeviceId is null)
+{
+    <MudAlert Severity="Severity.Info" Class="mt-4">请先明确选择目标设备，再进行手动操作。</MudAlert>
+}
+else
+{
+    @if (_communicationError is not null || !CanStartOutput)
+    {
+        <MudAlert Severity="Severity.Warning" Dense Class="mt-4">
+            @(_communicationError is not null
+                ? $"{_communicationError} · 输出状态未知，新置位指令已禁用。"
+                : $"设备当前为“{ConnectionLabel}”，输出状态未知，新置位指令已禁用。")
+        </MudAlert>
+    }
+    <MudAlert Severity="Severity.Warning" Dense Class="mt-4 manual-safety-note">
+        按下/触屏按住写入 1，松开、取消按压或离开按钮写入 0。网络中断时浏览器可能无法送达松开事件，请确保 PLC 保留必要的联锁与超时保护；本页面不能替代安全回路。
+    </MudAlert>
+
+    <div class="manual-output-toolbar">
+        <MudText Typo="Typo.body2">输出按钮 · @_outputBindings.Count</MudText>
+        <div class="d-flex flex-wrap gap-2">
+            <MudButton Variant="Variant.Outlined" Color="Color.Warning"
+                       StartIcon="@Icons.Material.Outlined.PowerSettingsNew"
+                       Disabled="@(HasActiveOutputs || _resettingAll || _selectedDevice is not { Enabled: true } || !CanStartOutput)"
+                       OnClick="ResetAllAsync">
+                @(_resettingAll ? "归零中…" : "全部归零")
+            </MudButton>
+            <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Outlined.Add"
+                       Disabled="@(HasActiveOutputs || _selectedDevice is not { Enabled: true })"
+                       OnClick="() => EditOutputPointAsync(null)">
+                新增按钮
+            </MudButton>
+        </div>
+    </div>
+    <div class="manual-output-grid" aria-label="Modbus Coil 手动输出">
+        @foreach (var output in _outputBindings)
+        {
+            var point = output.Point;
+            var state = GetOutputState(point.Id);
+            var held = _pressedOutputs.Contains(point.Id);
+            var pulsing = _pulsingOutputs.Contains(point.Id);
+            <article class="manual-output-card @((held || pulsing) ? "is-held" : "") @(!output.IsUsable ? "is-unbound" : "")">
+                <div class="manual-output-meta">
+                    <div class="manual-address">
+                        @if (output.Tag is { } tag)
+                        {
+                            <span class="manual-tag-name" title="@($"控制 · {tag.Name}")">
+                                <span class="manual-tag-role">控制</span>@tag.Name
+                            </span>
+                            <span class="manual-coil-address">COIL [@tag.Address]</span>
+                        }
+                        else if (point.DefaultPlcAddress is { } plcAddress)
+                        {
+                            <span class="manual-tag-name manual-tag-unbound">
+                                <span class="manual-tag-role">控制</span>未绑定 Tag
+                            </span>
+                            <span class="manual-coil-address">PLC @plcAddress</span>
+                        }
+                        else
+                        {
+                            <span class="manual-tag-name manual-tag-unbound">
+                                <span class="manual-tag-role">控制</span>未绑定 Tag
+                            </span>
+                            <span class="manual-coil-address">无地址</span>
+                        }
+                    </div>
+                    <div class="manual-address manual-monitor-address">
+                        @if (output.MonitorTag is { } monitorTag)
+                        {
+                            <span class="manual-tag-name" title="@($"监控 · {monitorTag.Name}")">
+                                <span class="manual-tag-role">监控</span>@monitorTag.Name
+                            </span>
+                            <span class="manual-coil-address">@GetTagAddressLabel(monitorTag)</span>
+                        }
+                        else
+                        {
+                            <span class="manual-tag-name manual-tag-unbound">
+                                <span class="manual-tag-role">监控</span>跟随控制 Tag
+                            </span>
+                            <span class="manual-coil-address">同控制地址</span>
+                        }
+                    </div>
+                    <div class="manual-meta-actions">
+                        <span class="manual-state @(state == true ? "state-on" : state == false ? "state-off" : "state-unknown")">
+                            <span class="manual-state-light"></span>
+                            @GetOutputStateLabel(output, state)
+                        </span>
+                        <div class="manual-manage-actions">
+                        <MudTooltip Text="上移按钮">
+                            <MudIconButton Icon="@Icons.Material.Outlined.ArrowUpward"
+                                           Size="Size.Small"
+                                           Color="Color.Default"
+                                           Class="manual-binding-button"
+                                           aria-label="@($"上移{point.Name}")"
+                                           Disabled="@(HasActiveOutputs || _reordering || GetOutputIndex(point.Id) <= 0)"
+                                           OnClick="() => MoveOutputAsync(output, -1)" />
+                        </MudTooltip>
+                        <MudTooltip Text="下移按钮">
+                            <MudIconButton Icon="@Icons.Material.Outlined.ArrowDownward"
+                                           Size="Size.Small"
+                                           Color="Color.Default"
+                                           Class="manual-binding-button"
+                                           aria-label="@($"下移{point.Name}")"
+                                           Disabled="@(HasActiveOutputs || _reordering || GetOutputIndex(point.Id) >= _outputBindings.Count - 1)"
+                                           OnClick="() => MoveOutputAsync(output, 1)" />
+                        </MudTooltip>
+                        <MudTooltip Text="配置按钮名称与 Tag">
+                            <MudIconButton Icon="@Icons.Material.Outlined.Settings"
+                                           Size="Size.Small"
+                                           Color="Color.Default"
+                                           Class="manual-binding-button"
+                                           aria-label="@($"配置{point.Name}")"
+                                           Disabled="@(HasActiveOutputs || _selectedDevice is not { Enabled: true })"
+                                           OnClick="() => EditOutputPointAsync(output)" />
+                        </MudTooltip>
+                        <MudTooltip Text="删除按钮">
+                            <MudIconButton Icon="@Icons.Material.Outlined.DeleteOutline"
+                                           Size="Size.Small"
+                                           Color="Color.Error"
+                                           Class="manual-binding-button"
+                                           aria-label="@($"删除{point.Name}")"
+                                           Disabled="@(HasActiveOutputs || _selectedDevice is not { Enabled: true })"
+                                           OnClick="() => DeleteOutputPointAsync(output)" />
+                        </MudTooltip>
+                        </div>
+                    </div>
+                </div>
+                @if (!output.IsUsable && output.Error is { } bindingError)
+                {
+                    <MudText Typo="Typo.caption" Color="Color.Warning" Class="manual-binding-error">@bindingError</MudText>
+                }
+                @if (output.MonitorError is { } monitorError)
+                {
+                    <MudText Typo="Typo.caption" Color="Color.Warning" Class="manual-binding-error">@monitorError · 状态显示未知</MudText>
+                }
+                <button type="button"
+                        class="manual-output-button"
+                        disabled="@IsOutputButtonDisabled(output, held)"
+                        aria-pressed="@(held || pulsing)"
+                        aria-label="@GetButtonAriaLabel(output)"
+                        @onpointerdown="() => HandlePointerDownAsync(output)"
+                        @onpointerup="() => HandlePointerUpAsync(output)"
+                        @onpointercancel="() => HandlePointerUpAsync(output)"
+                        @onpointerleave="() => HandlePointerUpAsync(output)"
+                        @onblur="() => HandlePointerUpAsync(output)"
+                        @onkeydown="args => HandleKeyDownAsync(output, args)"
+                        @onkeyup="args => HandleKeyUpAsync(output, args)"
+                        @onkeydown:preventDefault="true"
+                        @onkeyup:preventDefault="true">
+                    <span class="manual-output-name">@point.Name</span>
+                    <span class="manual-output-hint">@GetButtonHint(output, held, pulsing)</span>
+                </button>
+            </article>
+        }
+    </div>
+}
+
+@code {
+    private IReadOnlyList<Device> _devices = [];
+    private IReadOnlyList<ManualOutputService.OutputBinding> _outputBindings = [];
+    private IReadOnlyDictionary<Guid, bool?>? _outputStates;
+    private readonly HashSet<Guid> _pressedOutputs = [];
+    private readonly HashSet<Guid> _pulsingOutputs = [];
+    private readonly Dictionary<Guid, Guid> _pressedTagIds = [];
+    private readonly Dictionary<Guid, ushort> _pressedAddresses = [];
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, SemaphoreSlim> _outputLocks = new();
+    private Guid? _selectedDeviceId;
+    private string? _communicationError;
+    private bool _disposing;
+    private bool _resettingAll;
+    private bool _reordering;
+    private bool HasActiveOutputs => _pressedOutputs.Count > 0 || _pulsingOutputs.Count > 0;
+    private Device? _selectedDevice => _devices.FirstOrDefault(x => x.Id == _selectedDeviceId);
+    private DeviceSnapshot? _deviceState => _selectedDevice is { } device ? Communication.GetSnapshot(device.Id) : null;
+    private bool CanStartOutput => _selectedDevice is { Enabled: true } &&
+                                  _deviceState?.Status == ConnectionStatus.Online &&
+                                  _communicationError is null;
+    private string ConnectionLabel => _selectedDevice is not { Enabled: true } ? "未选择可用设备" : _deviceState?.Status switch
+    {
+        ConnectionStatus.Online => "在线",
+        ConnectionStatus.Connecting => "连接中",
+        ConnectionStatus.Faulted => "通信故障",
+        ConnectionStatus.Disabled => "已禁用",
+        _ => "等待通信"
+    };
+    private Color ConnectionColor => _deviceState?.Status switch
+    {
+        ConnectionStatus.Online => Color.Success,
+        ConnectionStatus.Faulted => Color.Error,
+        ConnectionStatus.Disabled => Color.Default,
+        _ => Color.Warning
+    };
+
+    protected override async Task RefreshAsync()
+    {
+        _selectedDeviceId = PageState.ManualDeviceId;
+        _devices = await Store.GetDevicesAsync();
+        if (_selectedDeviceId is not Guid selected || _devices.All(x => x.Id != selected))
+        {
+            if (HasActiveOutputs)
+            {
+                _outputStates = null;
+                _communicationError = "目标设备已不可用；为避免误写其他设备，未自动切换控制目标。";
+                return;
+            }
+            _selectedDeviceId = null;
+            PageState.ManualDeviceId = null;
+        }
+        else if (_selectedDevice is { Enabled: false })
+        {
+            if (HasActiveOutputs)
+            {
+                _outputStates = null;
+                _communicationError = "目标设备已禁用；输出状态未知，请确认设备状态。";
+                return;
+            }
+            _selectedDeviceId = null;
+            PageState.ManualDeviceId = null;
+        }
+
+        if (_selectedDevice is not { Enabled: true } device)
+        {
+            _outputStates = null;
+            _communicationError = null;
+            return;
+        }
+
+        try
+        {
+            var outputBindings = await ManualOutputs.GetOutputBindingsAsync(device.Id);
+            var currentOutputIds = outputBindings.Select(x => x.Point.Id).ToHashSet();
+            foreach (var binding in outputBindings)
+                _outputLocks.TryAdd(binding.Point.Id, new SemaphoreSlim(1, 1));
+            foreach (var entry in _outputLocks.ToArray())
+            {
+                if (!currentOutputIds.Contains(entry.Key) && !_pressedOutputs.Contains(entry.Key) &&
+                    _outputLocks.TryRemove(entry.Key, out var staleLock))
+                    staleLock.Dispose();
+            }
+            _outputBindings = outputBindings;
+            var outputStates = await ManualOutputs.ReadOutputsAsync(device.Id);
+            _outputStates = outputStates;
+            _communicationError = null;
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException)
+        {
+            _outputStates = null;
+            _communicationError = ex.Message;
+        }
+    }
+
+    private async Task ChangeDeviceAsync(Guid? id)
+    {
+        await ReleaseAllAsync();
+        _selectedDeviceId = id;
+        PageState.ManualDeviceId = id;
+        _outputBindings = [];
+        _outputStates = null;
+        _communicationError = null;
+        await RefreshAsync();
+    }
+
+    private ManualOutputService.OutputBinding? GetOutputBinding(Guid outputPointId)
+        => _outputBindings.FirstOrDefault(x => x.Point.Id == outputPointId);
+
+    private int GetOutputIndex(Guid outputPointId)
+    {
+        for (var index = 0; index < _outputBindings.Count; index++)
+        {
+            if (_outputBindings[index].Point.Id == outputPointId)
+                return index;
+        }
+        return -1;
+    }
+
+    private async Task MoveOutputAsync(ManualOutputService.OutputBinding output, int direction)
+    {
+        if (_selectedDevice is not { Enabled: true } device || HasActiveOutputs || _reordering) return;
+        _reordering = true;
+        try
+        {
+            await ManualOutputs.MoveOutputPointAsync(device.Id, output.Point.Id, direction);
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"调整按钮顺序失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _reordering = false;
+        }
+    }
+
+    private bool? GetOutputState(Guid outputPointId)
+        => _outputStates?.GetValueOrDefault(outputPointId);
+
+    private bool IsOutputButtonDisabled(ManualOutputService.OutputBinding output, bool held)
+    {
+        if (_selectedDevice is not { Enabled: true } || !output.IsUsable || output.Tag is null)
+            return true;
+        return IsPulseOutput(output)
+            ? _pulsingOutputs.Contains(output.Point.Id) || !CanStartOutput
+            : !held && !CanStartOutput;
+    }
+
+    private static bool IsPulseOutput(ManualOutputService.OutputBinding output)
+        => output.Point.OutputMode == ManualOutputMode.Pulse;
+
+    private static string GetButtonAriaLabel(ManualOutputService.OutputBinding output)
+        => IsPulseOutput(output)
+            ? $"{output.Point.Name}，点击触发 {output.Point.PulseDurationMs} 毫秒脉冲"
+            : $"{output.Point.Name}，按住写入 1，松开写入 0";
+
+    private string GetButtonHint(ManualOutputService.OutputBinding output, bool held, bool pulsing)
+    {
+        if (IsPulseOutput(output))
+        {
+            if (pulsing)
+                return $"脉冲中 · {output.Point.PulseDurationMs} ms";
+            return CanStartOutput ? $"点击脉冲 · {output.Point.PulseDurationMs} ms" : "通信未就绪 · 暂不可操作";
+        }
+        return held ? "已按下 · 输出 1" : CanStartOutput ? "按住 1 · 松开 0" : "通信未就绪 · 暂不可操作";
+    }
+
+    private static string GetOutputStateLabel(ManualOutputService.OutputBinding output, bool? state)
+        => state is null
+            ? output.MonitorTag is null ? "未知" : "监控未知"
+            : output.MonitorTag is null
+                ? state.Value ? "输出 1" : "输出 0"
+                : state.Value ? "状态 1" : "状态 0";
+
+    private static string GetTagAddressLabel(Tag tag)
+        => tag.AddressType == AddressType.DiscreteInput
+            ? $"DI [{tag.Address}]"
+            : $"COIL [{tag.Address}]";
+
+    private Task HandlePointerDownAsync(ManualOutputService.OutputBinding output)
+        => IsPulseOutput(output)
+            ? TriggerPulseAsync(output)
+            : SetOutputAsync(output.Point.Id, true);
+
+    private Task HandlePointerUpAsync(ManualOutputService.OutputBinding output)
+        => IsPulseOutput(output)
+            ? Task.CompletedTask
+            : SetOutputAsync(output.Point.Id, false);
+
+    private Task HandleKeyDownAsync(ManualOutputService.OutputBinding output, KeyboardEventArgs args)
+    {
+        if (args.Key is not (" " or "Enter"))
+            return Task.CompletedTask;
+        if (IsPulseOutput(output))
+            return args.Repeat ? Task.CompletedTask : TriggerPulseAsync(output);
+        return SetOutputAsync(output.Point.Id, true);
+    }
+
+    private Task HandleKeyUpAsync(ManualOutputService.OutputBinding output, KeyboardEventArgs args)
+        => args.Key is " " or "Enter" && !IsPulseOutput(output)
+            ? SetOutputAsync(output.Point.Id, false)
+            : Task.CompletedTask;
+
+    private async Task TriggerPulseAsync(ManualOutputService.OutputBinding output)
+    {
+        var outputPointId = output.Point.Id;
+        if (!_outputLocks.TryGetValue(outputPointId, out var gate)) return;
+        await gate.WaitAsync();
+        try
+        {
+            var deviceId = _selectedDeviceId;
+            if (deviceId is null) return;
+            if (!CanStartOutput)
+            {
+                Toast.Add("设备通信未就绪，未发送脉冲指令。", Severity.Warning);
+                return;
+            }
+            if (_selectedDevice is not { Enabled: true } ||
+                GetOutputBinding(outputPointId) is not { IsUsable: true, Tag: { } tag } ||
+                !_pulsingOutputs.Add(outputPointId)) return;
+            try
+            {
+                // 不传调用方令牌：脉冲的延时复位由服务端保证，浏览器断开也不会中断
+                await ManualOutputs.PulseOutputAsync(
+                    deviceId.Value, outputPointId, tag.Id, checked((ushort)tag.Address),
+                    CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _communicationError = ex.Message;
+                Toast.Add($"脉冲输出失败：{ex.Message}", Severity.Error);
+            }
+            finally
+            {
+                _pulsingOutputs.Remove(outputPointId);
+            }
+            if (!_disposing) await InvokeAsync(StateHasChanged);
+        }
+        finally { gate.Release(); }
+    }
+
+    private async Task SetOutputAsync(Guid outputPointId, bool value)
+    {
+        if (!_outputLocks.TryGetValue(outputPointId, out var gate)) return;
+        await gate.WaitAsync();
+        try
+        {
+            var deviceId = _selectedDeviceId;
+            if (deviceId is null) return;
+            Guid tagId;
+            ushort address;
+            if (value)
+            {
+                if (!CanStartOutput)
+                {
+                    Toast.Add("设备通信未就绪，未发送置位指令。", Severity.Warning);
+                    return;
+                }
+                if (_selectedDevice is not { Enabled: true } ||
+                    GetOutputBinding(outputPointId) is not { IsUsable: true, Tag: { } tag } ||
+                    !_pressedOutputs.Add(outputPointId)) return;
+                tagId = tag.Id;
+                address = checked((ushort)tag.Address);
+                _pressedTagIds[outputPointId] = tagId;
+                _pressedAddresses[outputPointId] = address;
+            }
+            else
+            {
+                if (!_pressedOutputs.Contains(outputPointId)) return;
+                if (!_pressedTagIds.TryGetValue(outputPointId, out tagId) ||
+                    !_pressedAddresses.TryGetValue(outputPointId, out address)) return;
+            }
+
+            try
+            {
+                await ManualOutputs.SetOutputAsync(deviceId.Value, outputPointId, tagId, address, value);
+                if (!value)
+                {
+                    _pressedOutputs.Remove(outputPointId);
+                    _pressedTagIds.Remove(outputPointId);
+                    _pressedAddresses.Remove(outputPointId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _outputStates = null;
+                _communicationError = ex.Message;
+                if (value)
+                {
+                    try
+                    {
+                        await ManualOutputs.SetOutputAsync(deviceId.Value, outputPointId, tagId, address, false);
+                        _pressedOutputs.Remove(outputPointId);
+                        _pressedTagIds.Remove(outputPointId);
+                        _pressedAddresses.Remove(outputPointId);
+                    }
+                    catch (Exception releaseError)
+                    {
+                        ex = new AggregateException(ex, releaseError);
+                    }
+                }
+                Toast.Add(value
+                    ? $"写入输出失败，已尝试归零：{ex.Message}"
+                    : $"归零写入失败，输出状态未知，请立即确认设备：{ex.Message}", Severity.Error);
+            }
+            if (!_disposing) await InvokeAsync(StateHasChanged);
+        }
+        finally { gate.Release(); }
+    }
+
+    private async Task ReleaseAllAsync()
+    {
+        foreach (var outputPointId in _pressedOutputs.ToArray())
+            await SetOutputAsync(outputPointId, false);
+    }
+
+    private async Task ResetAllAsync()
+    {
+        if (_selectedDevice is not { Enabled: true } device || HasActiveOutputs || _resettingAll) return;
+        if (!CanStartOutput)
+        {
+            Toast.Add("设备通信未就绪，未执行归零。", Severity.Warning);
+            return;
+        }
+        var usableCount = _outputBindings.Count(x => x.IsUsable);
+        if (await Dialogs.ShowMessageBox(
+                "全部归零",
+                $"将向设备“{device.Name}”上全部 {usableCount} 个可用输出写入 0（含当前为 0 的按钮），用于手动操作后归零。继续？",
+                yesText: "全部归零", cancelText: "取消") != true)
+            return;
+
+        _resettingAll = true;
+        try
+        {
+            var result = await ManualOutputs.ResetAllOutputsAsync(device.Id);
+            if (result.FailedCount == 0)
+            {
+                Toast.Add($"已归零 {result.ResetCount} 个输出" +
+                          (result.SkippedCount > 0 ? $"，{result.SkippedCount} 个未绑定跳过" : ""), Severity.Success);
+            }
+            else
+            {
+                var details = string.Join("\n", result.Items
+                    .Where(x => x.Status == "失败")
+                    .Take(10)
+                    .Select(x => $"· {x.PointName}（{x.Address}）：{x.Error}"));
+                await Dialogs.ShowMessageBox(
+                    "全部归零结果",
+                    $"成功 {result.ResetCount} 个，失败 {result.FailedCount} 个，跳过 {result.SkippedCount} 个：\n{details}",
+                    yesText: "知道了");
+            }
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            _communicationError = ex.Message;
+            Toast.Add($"全部归零失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _resettingAll = false;
+        }
+    }
+
+    private async Task EditOutputPointAsync(ManualOutputService.OutputBinding? output)
+    {
+        if (_selectedDevice is not { Enabled: true } device || HasActiveOutputs) return;
+        var point = output?.Point;
+        var dialog = await Dialogs.ShowAsync<ManualOutputPointDialog>(
+            point is null ? "新增输出按钮" : "配置输出按钮",
+            new DialogParameters<ManualOutputPointDialog>
+            {
+                { x => x.DeviceId, device.Id },
+                { x => x.OutputPointId, point?.Id },
+                { x => x.InitialName, point?.Name ?? "" },
+                { x => x.InitialTagId, output?.Tag?.Id },
+                { x => x.InitialMonitorTagId, output?.MonitorTag?.Id }
+            },
+            new() { FullWidth = true, MaxWidth = MaxWidth.Medium, CloseButton = true });
+        var result = await dialog.Result;
+        if (result is { Canceled: false })
+        {
+            Toast.Add(point is null
+                ? "按钮已新增；未绑定有效 Tag 时将保持禁用"
+                : "按钮名称与 Tag 配置已保存", Severity.Success);
+            await RefreshAsync();
+        }
+    }
+
+    private async Task DeleteOutputPointAsync(ManualOutputService.OutputBinding output)
+    {
+        if (_selectedDevice is not { Enabled: true } device || HasActiveOutputs) return;
+        if (await Dialogs.ShowMessageBox("删除输出按钮",
+                $"确定从设备“{device.Name}”删除“{output.Point.Name}”吗？关联的 Tag 绑定也会解除。",
+                yesText: "删除", cancelText: "取消") != true)
+            return;
+        try
+        {
+            await ManualOutputs.DeleteOutputPointAsync(device.Id, output.Point.Id);
+            Toast.Add($"按钮“{output.Point.Name}”已删除", Severity.Success);
+            await RefreshAsync();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException)
+        {
+            Toast.Add($"删除按钮失败：{ex.Message}", Severity.Error);
+        }
+    }
+
+    public override async ValueTask DisposeAsync()
+    {
+        _disposing = true;
+        await base.DisposeAsync();
+        await ReleaseAllAsync();
+        foreach (var gate in _outputLocks.Values) gate.Dispose();
+    }
+}

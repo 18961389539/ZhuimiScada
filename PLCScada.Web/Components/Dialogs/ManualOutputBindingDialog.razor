@@ -1,0 +1,133 @@
+@inject ManualOutputService ManualOutputs
+
+<MudDialog>
+    <DialogContent>
+        <MudAlert Severity="Severity.Warning" Dense Class="mb-4">
+            保存后仅更新这一路按钮，并写入所选 Tag 实际对应的 Coil 地址。请核对设备与 PLC 接线；未绑定时按钮将保持禁用。
+        </MudAlert>
+
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate Color="Color.Primary" />
+        }
+        else
+        {
+            @if (_error is not null)
+            {
+                <MudAlert Severity="Severity.Error" Dense Class="mb-3">@_error</MudAlert>
+            }
+
+            <MudText Typo="Typo.subtitle1" Class="mb-2">
+                @_binding?.Point.Name · PLC @(_binding?.Point.DefaultPlcAddress ?? "由绑定 Tag 决定")
+            </MudText>
+            <MudSelect T="Guid?" Value="_selection" ValueChanged="ChangeSelection"
+                       Label="绑定 Tag" Variant="Variant.Outlined" Margin="Margin.Dense">
+                <MudSelectItem T="Guid?" Value="@((Guid?)null)">未绑定</MudSelectItem>
+                @if (_binding?.Tag is { } current && !_eligibleTags.Any(x => x.Id == current.Id))
+                {
+                    <MudSelectItem T="Guid?" Value="@((Guid?)current.Id)" Disabled="true">
+                        @current.Name · 当前配置不可写
+                    </MudSelectItem>
+                }
+                @foreach (var tag in _eligibleTags)
+                {
+                    <MudSelectItem T="Guid?" Value="@((Guid?)tag.Id)"
+                                   Disabled="@IsUsedElsewhere(tag.Id)">
+                        @tag.Name · Coil[@tag.Address]
+                    </MudSelectItem>
+                }
+            </MudSelect>
+
+            @if (_selection is Guid selectedId &&
+                 _eligibleTags.FirstOrDefault(x => x.Id == selectedId) is Tag selectedTag)
+            {
+                <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-2">
+                    当前将写入 Coil[@selectedTag.Address]
+                </MudText>
+            }
+            else
+            {
+                <MudText Typo="Typo.caption" Color="Color.Warning" Class="mt-2">
+                    当前未绑定，操作按钮将被禁用。
+                </MudText>
+            }
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Disabled="@_saving">取消</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                   OnClick="SaveAsync" Disabled="@(_loading || _saving)">
+            @(_saving ? "保存中…" : "保存这一路绑定")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [Parameter] public Guid DeviceId { get; set; }
+    [Parameter] public Guid OutputPointId { get; set; }
+    [CascadingParameter] public IMudDialogInstance Dialog { get; set; } = default!;
+
+    private ManualOutputService.OutputBinding? _binding;
+    private IReadOnlyList<ManualOutputService.OutputBinding> _bindings = [];
+    private IReadOnlyList<Tag> _eligibleTags = [];
+    private Guid? _selection;
+    private bool _loading = true;
+    private bool _saving;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _bindings = await ManualOutputs.GetOutputBindingsAsync(DeviceId);
+            _binding = _bindings.SingleOrDefault(x => x.Point.Id == OutputPointId)
+                ?? throw new InvalidOperationException("找不到该输出按钮。");
+            _eligibleTags = await ManualOutputs.GetEligibleTagsAsync(DeviceId);
+            _selection = _binding.Tag?.Id;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void ChangeSelection(Guid? tagId)
+    {
+        _selection = tagId;
+        _error = null;
+    }
+
+    private bool IsUsedElsewhere(Guid tagId)
+    {
+        var candidate = _eligibleTags.FirstOrDefault(x => x.Id == tagId);
+        return candidate is not null && _bindings.Any(x =>
+            x.Point.Id != OutputPointId && x.Tag is { } other &&
+            (other.Id == candidate.Id || other.Address == candidate.Address));
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_saving || _loading) return;
+        _saving = true;
+        _error = null;
+        try
+        {
+            await ManualOutputs.SaveOutputBindingAsync(DeviceId, OutputPointId, _selection);
+            Dialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private void Cancel() => Dialog.Cancel();
+}

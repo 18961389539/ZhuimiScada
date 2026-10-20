@@ -1,0 +1,144 @@
+@inject AlarmDefinitionService Definitions
+@inject IDialogService Dialogs
+@inject ISnackbar Toast
+
+<MudDialog>
+    <DialogContent>
+        <MudAlert Severity="Severity.Info" Dense Class="mb-3">
+            位报警用于 M/Coil 点位（Bool 等于 1 或 0 触发）；枚举报警用于状态字/故障码（数值命中集合触发）。
+            保存后约 10 秒内生效，触发/恢复自动记录与解除。
+        </MudAlert>
+        <div class="d-flex justify-end mb-2">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                       StartIcon="@Icons.Material.Outlined.Add" OnClick="() => EditAsync(null)">
+                新增报警定义
+            </MudButton>
+        </div>
+        <MudTable Items="_definitions" Dense Hover Elevation="0" Breakpoint="Breakpoint.Sm">
+            <HeaderContent>
+                <MudTh>名称</MudTh>
+                <MudTh>Tag</MudTh>
+                <MudTh>条件</MudTh>
+                <MudTh>级别</MudTh>
+                <MudTh>延时</MudTh>
+                <MudTh>消息</MudTh>
+                <MudTh>状态</MudTh>
+                <MudTh>操作</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="名称"><strong>@context.Name</strong></MudTd>
+                <MudTd DataLabel="Tag">
+                    @context.Tag?.Name
+                    <small>@GetAddressLabel(context.Tag)</small>
+                </MudTd>
+                <MudTd DataLabel="条件">@GetConditionLabel(context)</MudTd>
+                <MudTd DataLabel="级别">@context.Severity</MudTd>
+                <MudTd DataLabel="延时">@(context.DelaySeconds > 0 ? $"{context.DelaySeconds} 秒" : "立即")</MudTd>
+                <MudTd DataLabel="消息"><small>@context.Message</small></MudTd>
+                <MudTd DataLabel="状态">
+                    <MudSwitch T="bool" Value="@context.Enabled" Color="Color.Success"
+                               ValueChanged="enabled => ToggleEnabledAsync(context, enabled)" />
+                </MudTd>
+                <MudTd DataLabel="操作">
+                    <MudIconButton Icon="@Icons.Material.Outlined.Edit" Size="Size.Small"
+                                   title="编辑报警定义" OnClick="() => EditAsync(context)" />
+                    <MudIconButton Icon="@Icons.Material.Outlined.DeleteOutline" Size="Size.Small"
+                                   Color="Color.Error" title="删除报警定义"
+                                   OnClick="() => DeleteAsync(context)" />
+                </MudTd>
+            </RowTemplate>
+            <NoRecordsContent>
+                <MudText Class="pa-4">还没有报警定义。点右上「新增报警定义」配置位报警（M 点位）或枚举报警（故障码/状态字）。</MudText>
+            </NoRecordsContent>
+        </MudTable>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Close">关闭</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] public IMudDialogInstance Dialog { get; set; } = default!;
+
+    private IReadOnlyList<AlarmDefinition> _definitions = [];
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private async Task ReloadAsync() => _definitions = await Definitions.GetAllAsync();
+
+    private static string GetAddressLabel(Tag? tag)
+        => tag is null ? "" : $" · {tag.AddressType}[{tag.Address}] {tag.DataType}";
+
+    private static string GetConditionLabel(AlarmDefinition definition)
+        => definition.Kind == AlarmDefinitionKind.Bit
+            ? $"位 = {(definition.BitTarget ? 1 : 0)}"
+            : $"枚举 {FormatEnumValues(definition.EnumValues)}";
+
+    private static string FormatEnumValues(string raw)
+        => string.Join(", ", raw.Split([',', '，', ';', '；'],
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(part =>
+            {
+                var separator = part.IndexOf('=');
+                return separator < 0 ? part : $"{part[..separator]}→{part[(separator + 1)..]}";
+            }));
+
+    private async Task EditAsync(AlarmDefinition? definition)
+    {
+        var dialog = await Dialogs.ShowAsync<AlarmDefinitionDialog>(
+            definition is null ? "新增报警定义" : $"编辑报警定义 · {definition.Name}",
+            new DialogParameters<AlarmDefinitionDialog> { { x => x.Item, definition } },
+            new() { FullWidth = true, MaxWidth = MaxWidth.Medium, CloseButton = true });
+        if ((await dialog.Result) is { Canceled: false })
+        {
+            Toast.Add("报警定义已保存", Severity.Success);
+            await ReloadAsync();
+        }
+    }
+
+    private async Task ToggleEnabledAsync(AlarmDefinition definition, bool enabled)
+    {
+        try
+        {
+            await Definitions.SaveAsync(new AlarmDefinition
+            {
+                Id = definition.Id,
+                TagId = definition.TagId,
+                Name = definition.Name,
+                Kind = definition.Kind,
+                BitTarget = definition.BitTarget,
+                EnumValues = definition.EnumValues,
+                Severity = definition.Severity,
+                Message = definition.Message,
+                DelaySeconds = definition.DelaySeconds,
+                Enabled = enabled
+            });
+            Toast.Add(enabled ? $"已启用“{definition.Name}”" : $"已停用“{definition.Name}”", Severity.Success);
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"切换失败：{ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task DeleteAsync(AlarmDefinition definition)
+    {
+        if (await Dialogs.ShowMessageBox("删除报警定义",
+                $"确定删除“{definition.Name}”吗？已产生的报警记录会保留。",
+                yesText: "删除", cancelText: "取消") != true)
+            return;
+        try
+        {
+            await Definitions.DeleteAsync(definition.Id);
+            Toast.Add("报警定义已删除", Severity.Success);
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"删除失败：{ex.Message}", Severity.Error);
+        }
+    }
+
+    private void Close() => Dialog.Close();
+}

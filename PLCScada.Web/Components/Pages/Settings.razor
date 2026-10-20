@@ -1,0 +1,353 @@
+@page "/settings"
+@inherits LivePage
+@using Microsoft.EntityFrameworkCore
+@using PLCScada.Infrastructure.Persistence
+@inject ISimulatorControl Simulator
+@inject ISnackbar Toast
+@inject IDialogService Dialogs
+@inject DataRetentionOptions Retention
+@inject IDbContextFactory<ScadaDbContext> DbFactory
+@inject IWebHostEnvironment Env
+<PageTitle>系统设置 · PLCScada</PageTitle>
+<PageHeading Section="SETTINGS" title="系统设置" Description="开发模拟器控制、数据保留策略维护与运行环境信息。" />
+<MudGrid>
+    <MudItem xs="12">
+        <MudPaper Outlined Elevation="0" Class="pa-6">
+            <div class="section-heading">
+                <MudText Typo="Typo.h6">Modbus TCP 开发模拟器</MudText>
+                <MudChip T="string" Size="Size.Small" Color="@(Simulator.Running ? Color.Success : Color.Default)">@(Simulator.Running ? "运行中" : "已停止")</MudChip>
+            </div>
+            <MudAlert Severity="Severity.Warning" Dense Class="mb-4">仅用于开发测试，模拟数据不代表真实 PLC。仅监听 127.0.0.1。</MudAlert>
+            <MudText Class="mb-3 mono">127.0.0.1:@Simulator.Port / Unit ID 1</MudText>
+            <MudText Typo="Typo.body2" Class="muted mb-4">HoldingRegister[0] 为变化的模拟温度（Scale 0.1）；Coil[1] 每秒切换；HoldingRegister[10] 初始值为 1234。停止模拟器可验证故障报警，重新启动可验证自动重连。</MudText>
+            @if (Simulator.LastError is not null) { <MudAlert Severity="Severity.Error">@Simulator.LastError</MudAlert> }
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(!Simulator.Available || _busy)" OnClick="ToggleAsync" StartIcon="@(Simulator.Running ? Icons.Material.Filled.Stop : Icons.Material.Filled.PlayArrow)">@(Simulator.Running ? "停止模拟器" : "启动模拟器")</MudButton>
+            @if (!Simulator.Available) { <MudText Typo="Typo.caption" Class="mt-3 muted">模拟器未启用。需 Development 环境和 Simulator:Enabled=true。</MudText> }
+        </MudPaper>
+    </MudItem>
+
+    <MudItem xs="12">
+        <MudPaper Outlined Elevation="0" Class="pa-6">
+            <div class="section-heading">
+                <MudText Typo="Typo.h6">数据保留策略</MudText>
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info">保存在数据库</MudChip>
+            </div>
+            <MudText Typo="Typo.body2" Class="muted mb-4">
+                超龄数据在应用启动时与每 6 小时自动清理；保存后下个清理周期生效。0 表示永久保留；未解除与已确认未解除的报警一律不会被清理。
+            </MudText>
+            <MudGrid>
+                <MudItem xs="12" md="4">
+                    <MudNumericField T="int" @bind-Value="_retentionLogs" Immediate="true"
+                                     Label="操作日志保留（天）" Min="0" Max="3650"
+                                     Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudNumericField T="int" @bind-Value="_retentionAlarms" Immediate="true"
+                                     Label="已解除报警保留（天）" Min="0" Max="3650"
+                                     Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudNumericField T="int" @bind-Value="_retentionApplies" Immediate="true"
+                                     Label="配方下发记录保留（天）" Min="0" Max="3650"
+                                     Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudNumericField T="int" @bind-Value="_retentionSn" Immediate="true"
+                                     Label="SN 追溯记录保留（天）" Min="0" Max="3650"
+                                     Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+            </MudGrid>
+            <div class="d-flex flex-wrap gap-2 mt-4">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@_saving"
+                           OnClick="SaveRetentionAsync" StartIcon="@Icons.Material.Outlined.Save">
+                    @(_saving ? "保存中…" : "保存保留策略")
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Warning" Disabled="@_cleaning"
+                           OnClick="CleanupNowAsync" StartIcon="@Icons.Material.Outlined.CleaningServices">
+                    @(_cleaning ? "清理中…" : "立即按策略清理")
+                </MudButton>
+                <MudButton Variant="Variant.Text" OnClick="ReloadAsync" StartIcon="@Icons.Material.Outlined.Restore">
+                    重新载入
+                </MudButton>
+            </div>
+        </MudPaper>
+    </MudItem>
+
+    <MudItem xs="12">
+        <MudPaper Outlined Elevation="0" Class="pa-6">
+            <div class="section-heading">
+                <MudText Typo="Typo.h6">采集与轮询</MudText>
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info">保存在数据库</MudChip>
+            </div>
+            <MudText Typo="Typo.body2" Class="muted mb-4">
+                全局 Tag 扫描间隔：所有 Tag 统一使用该周期采集。
+                质量报警阈值：连续通信/解码失败达到该次数生成质量报警（0 = 关闭）。
+                实际采集周期不小于设备轮询周期；保存后下一轮采集生效。
+            </MudText>
+            <MudGrid>
+                <MudItem xs="12" md="4">
+                    <MudNumericField T="int" @bind-Value="_globalScanInterval" Immediate="true"
+                                     Label="全局 Tag 扫描间隔（ms）" Min="250" Max="60000"
+                                     Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudNumericField T="int" @bind-Value="_qualityAlarmFailures" Immediate="true"
+                                     Label="质量报警阈值（连续失败次数，0 = 关闭）" Min="0" Max="1000"
+                                     Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+            </MudGrid>
+            <div class="d-flex flex-wrap gap-2 mt-4">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@_savingScan"
+                           OnClick="SavePollingAsync" StartIcon="@Icons.Material.Outlined.Save">
+                    @(_savingScan ? "保存中…" : "保存采集设置")
+                </MudButton>
+            </div>
+        </MudPaper>
+    </MudItem>
+
+    <MudItem xs="12">
+        <MudPaper Outlined Elevation="0" Class="pa-6">
+            <div class="section-heading">
+                <MudText Typo="Typo.h6">运行状态监控</MudText>
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info">
+                    @(RunningTagLabel)
+                </MudChip>
+            </div>
+            <MudText Typo="Typo.body2" Class="muted mb-4">
+                仅可选择布尔（Bool）Tag：值为 true 时顶部状态显示“运行中”，false 显示“已停止”。
+                保存后下一采集周期生效并写入审计日志。
+            </MudText>
+            <MudGrid>
+                <MudItem xs="12" md="6">
+                    <MudSelect T="Guid?" Value="_runningTagId" ValueChanged="OnRunningTagChanged"
+                               Label="运行状态监控 Tag" Variant="Variant.Outlined" Margin="Margin.Dense">
+                        <MudSelectItem T="Guid?" Value="@((Guid?)null)">不启用运行状态监控</MudSelectItem>
+                        @foreach (var tag in _runningTagOptions)
+                        {
+                            <MudSelectItem T="Guid?" Value="@((Guid?)tag.Id)">@GetRunningTagLabel(tag)</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+            </MudGrid>
+            <div class="d-flex flex-wrap gap-2 mt-4">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@_savingRunning"
+                           OnClick="SaveRunningStateAsync" StartIcon="@Icons.Material.Outlined.Save">
+                    @(_savingRunning ? "保存中…" : "保存运行状态设置")
+                </MudButton>
+            </div>
+        </MudPaper>
+    </MudItem>
+
+    <MudItem xs="12">
+        <MudPaper Outlined Elevation="0" Class="pa-6">
+            <div class="section-heading">
+                <MudText Typo="Typo.h6">存储与运行信息</MudText>
+            </div>
+            <MudSimpleTable Dense Elevation="0">
+                <tbody>
+                    <tr><td style="width: 140px">数据库文件</td><td class="mono">@(_dbPath.Length == 0 ? "读取中…" : _dbPath)</td></tr>
+                    <tr><td>数据库大小</td><td>@FormatSize(_dbSize)</td></tr>
+                    <tr><td>日志目录</td><td class="mono">@_logDir</td></tr>
+                    <tr><td>设备在线</td><td>@_onlineDevices / @_totalDevices 台</td></tr>
+                    <tr><td>应用版本</td><td>@_version</td></tr>
+                </tbody>
+            </MudSimpleTable>
+        </MudPaper>
+    </MudItem>
+</MudGrid>
+@code {
+    private bool _busy;
+    private bool _saving;
+    private bool _cleaning;
+    private bool _savingScan;
+    private int _globalScanInterval = 1000;
+    private int _qualityAlarmFailures;
+    private Guid? _runningTagId;
+    private IReadOnlyList<Tag> _runningTagOptions = [];
+    private bool _savingRunning;
+    private string RunningTagLabel => _runningTagId is Guid id
+        ? _runningTagOptions.FirstOrDefault(x => x.Id == id)?.Name ?? "所选 Tag 已删除"
+        : "未启用";
+    private bool _loaded;
+    private int _retentionLogs;
+    private int _retentionAlarms;
+    private int _retentionApplies;
+    private int _retentionSn = 90;
+    private string _dbPath = "";
+    private long _dbSize;
+    private string _logDir = "";
+    private string _version = "—";
+    private int _onlineDevices;
+    private int _totalDevices;
+
+    protected override async Task RefreshAsync()
+    {
+        _onlineDevices = Communication.GetSnapshots().Count(x => x.Status == ConnectionStatus.Online);
+        if (_loaded) return;
+        try
+        {
+            var effective = await Store.GetRetentionOptionsAsync(Retention);
+            _retentionLogs = effective.OperationLogRetentionDays;
+            _retentionAlarms = effective.ClearedAlarmRetentionDays;
+            _retentionApplies = effective.RecipeApplyRecordRetentionDays;
+            _retentionSn = effective.SnRecordRetentionDays;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var connectionString = db.Database.GetConnectionString() ?? "";
+            var dataSource = new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(connectionString).DataSource;
+            _dbPath = dataSource.Length == 0 ? "（内存数据库）" : Path.GetFullPath(dataSource);
+            _dbSize = File.Exists(_dbPath) ? new FileInfo(_dbPath).Length : 0;
+            _logDir = Path.Combine(Env.ContentRootPath, "App_Data", "logs");
+            _version = GetType().Assembly.GetName().Version?.ToString(3) ?? "—";
+            _globalScanInterval = await Store.GetTagScanIntervalAsync(1000);
+            _qualityAlarmFailures = await Store.GetQualityAlarmFailuresAsync(0);
+            _runningTagId = await Store.GetRunningStateTagIdAsync();
+            _runningTagOptions = (await Store.GetTagsAsync())
+                .Where(x => x.DataType == TagDataType.Bool)
+                .ToArray();
+            _totalDevices = (await Store.GetDevicesAsync()).Count;
+            _loaded = true;
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"读取设置失败：{ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task ReloadAsync()
+    {
+        _loaded = false;
+        await RefreshAsync();
+        Toast.Add("已重新载入当前设置", Severity.Info);
+    }
+
+    private async Task SaveRetentionAsync()
+    {
+        if (_saving) return;
+        _saving = true;
+        try
+        {
+            await Store.SaveRetentionOptionsAsync(new DataRetentionOptions
+            {
+                OperationLogRetentionDays = _retentionLogs,
+                ClearedAlarmRetentionDays = _retentionAlarms,
+                RecipeApplyRecordRetentionDays = _retentionApplies,
+                SnRecordRetentionDays = _retentionSn,
+                CheckInterval = Retention.CheckInterval
+            });
+            Toast.Add("数据保留策略已保存（下个清理周期生效）", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"保存失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task CleanupNowAsync()
+    {
+        if (_cleaning) return;
+        var effective = new DataRetentionOptions
+        {
+            OperationLogRetentionDays = _retentionLogs,
+            ClearedAlarmRetentionDays = _retentionAlarms,
+            RecipeApplyRecordRetentionDays = _retentionApplies,
+            CheckInterval = Retention.CheckInterval
+        };
+        if (await Dialogs.ShowMessageBox(
+                "立即按策略清理",
+                $"将按当前策略删除超龄数据：操作日志 {Days(_retentionLogs)}、已解除报警 {Days(_retentionAlarms)}、配方下发记录 {Days(_retentionApplies)}。" +
+                "清理动作会写入审计日志，确定继续吗？",
+                yesText: "清理", cancelText: "取消") != true)
+            return;
+        _cleaning = true;
+        try
+        {
+            var result = await Store.CleanupHistoryAsync(effective);
+            var deleted = result.OperationLogsDeleted + result.ClearedAlarmsDeleted + result.RecipeApplyRecordsDeleted;
+            Toast.Add(deleted == 0
+                ? "没有超龄数据需要清理"
+                : $"已清理：日志 {result.OperationLogsDeleted} 条、已解除报警 {result.ClearedAlarmsDeleted} 条、配方下发记录 {result.RecipeApplyRecordsDeleted} 条",
+                Severity.Success);
+            _dbSize = File.Exists(_dbPath) ? new FileInfo(_dbPath).Length : 0;
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"清理失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _cleaning = false;
+        }
+    }
+
+    private async Task SavePollingAsync()
+    {
+        if (_savingScan) return;
+        _savingScan = true;
+        try
+        {
+            await Store.SaveTagScanIntervalAsync(_globalScanInterval);
+            await Store.SaveQualityAlarmFailuresAsync(_qualityAlarmFailures);
+            Toast.Add($"采集设置已保存（扫描间隔 {_globalScanInterval} ms，质量报警阈值 {_qualityAlarmFailures} 次）", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"保存失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _savingScan = false;
+        }
+    }
+
+    private void OnRunningTagChanged(Guid? tagId) => _runningTagId = tagId;
+
+    private static string GetRunningTagLabel(Tag tag)
+        => $"{tag.Name} · {tag.AddressType}[{tag.Address}] · {tag.DataType}";
+
+    private async Task SaveRunningStateAsync()
+    {
+        if (_savingRunning) return;
+        _savingRunning = true;
+        try
+        {
+            await Store.SetRunningStateTagIdAsync(_runningTagId);
+            Toast.Add(_runningTagId is null
+                ? "已关闭运行状态监控"
+                : $"运行状态监控已设置为「{RunningTagLabel}」（下一采集周期生效）", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"保存失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _savingRunning = false;
+        }
+    }
+
+    private async Task ToggleAsync()
+    {
+        _busy = true;
+        try
+        {
+            if (Simulator.Running) await Simulator.StopAsync(); else await Simulator.StartAsync();
+            await Store.LogAsync("Simulator", Simulator.Running ? "用户启动开发模拟器" : "用户停止开发模拟器");
+            Toast.Add(Simulator.Running ? "模拟器已启动" : "模拟器已停止", Severity.Success);
+        }
+        catch (Exception ex) { Toast.Add(ex.Message, Severity.Error); }
+        finally { _busy = false; }
+    }
+
+    private static string Days(int days) => days > 0 ? $"{days} 天" : "永久";
+
+    private static string FormatSize(long bytes) => bytes switch
+    {
+        <= 0 => "—",
+        < 1024 * 1024 => $"{bytes / 1024.0:0.#} KB",
+        _ => $"{bytes / 1024.0 / 1024.0:0.##} MB"
+    };
+}

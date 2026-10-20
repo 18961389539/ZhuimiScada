@@ -1,0 +1,191 @@
+@page "/tags"
+@inherits LivePage
+@inject TagService TagsService
+@inject IDialogService Dialogs
+@inject ISnackbar Toast
+@inject PageUiState PageState
+<PageTitle>变量管理 · PLCScada</PageTitle>
+<PageHeading Section="TAGS" title="变量管理" Description="通过统一 TagRuntime 监测设备变量，配置与实时数据分离管理。"><MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Add" OnClick="@(() => EditAsync(null))">新增 Tag</MudButton></PageHeading>
+@if (LoadError is not null) { <MudAlert Severity="Severity.Error">@LoadError</MudAlert> }
+<div class="tags-filter-summary" role="status" aria-live="polite">
+    <MudText Typo="Typo.caption">当前显示 <strong>@VisibleTagCount</strong> / @_tags.Count 个 Tag</MudText>
+    @if (HasActiveFilter)
+    {
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info">筛选已应用</MudChip>
+    }
+    <MudButton Variant="Variant.Text" Size="Size.Small" Disabled="@(!HasActiveFilter)"
+               StartIcon="@Icons.Material.Outlined.FilterAltOff" OnClick="ClearFilters">
+        清除筛选
+    </MudButton>
+</div>
+<MudPaper Outlined Elevation="0" Class="table-panel">
+    <MudTable Items="_tags" Filter="Filter" Hover Elevation="0" MultiSelection="true" @bind-SelectedItems="_selectedTags">
+        <ToolBarContent><MudSelect T="Guid?" @bind-Value="PageState.TagsDeviceId" Label="设备筛选" Variant="Variant.Outlined" Margin="Margin.Dense" Class="search-field mr-3"><MudSelectItem T="Guid?" Value="@((Guid?)null)">全部设备</MudSelectItem>@foreach (var device in _devices) { <MudSelectItem T="Guid?" Value="@((Guid?)device.Id)">@device.Name</MudSelectItem> }</MudSelect><MudSpacer /><MudTextField @bind-Value="PageState.TagsSearch" Immediate Placeholder="搜索 Tag 名称" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Variant="Variant.Outlined" Margin="Margin.Dense" Class="search-field" />@if (_selectedTags.Count > 0){<MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info">已选 @_selectedTags.Count</MudChip><MudButton Variant="Variant.Outlined" Size="Size.Small" Color="Color.Success" Disabled="@_bulkBusy" OnClick="@(() => SetEnabledAsync(true))">批量启用</MudButton><MudButton Variant="Variant.Outlined" Size="Size.Small" Color="Color.Warning" Disabled="@_bulkBusy" OnClick="@(() => SetEnabledAsync(false))">批量禁用</MudButton>}<label for="tag-import" class="tag-import-button"><MudIcon Icon="@Icons.Material.Outlined.FileUpload" Size="Size.Small" />导入配置</label><InputFile id="tag-import" class="tag-import-input" style="display: none;" accept=".json,application/json" OnChange="ImportAsync" /><a class="tag-export-button" href="@GetExportDataUrl()" download="PLCScada-Tags.json" title="导出全部 Tag 配置"><MudIcon Icon="@Icons.Material.Outlined.FileDownload" Size="Size.Small" />导出全部</a></ToolBarContent>
+        <HeaderContent><MudTh><MudTableSortLabel SortBy="new Func<Tag, object>(x => x.Name)">Tag 名称</MudTableSortLabel></MudTh><MudTh>设备 / 零基地址</MudTh><MudTh>数据类型</MudTh><MudTh>当前值</MudTh><MudTh>质量</MudTh><MudTh>更新时间</MudTh><MudTh>操作</MudTh></HeaderContent>
+        <RowTemplate>
+            @{ var value = Runtime.GetTagSnapshot(context.Id); }
+            <MudTd DataLabel="Tag 名称"><strong>@context.Name</strong><small class="cell-secondary">@context.Description</small>@if (GetLimitSummary(context) is string limitSummary){<small class="cell-secondary">@limitSummary</small>}@if (context.QualityAlarmAfterFailures > 0){<small class="cell-secondary">连续失败报警：@(context.QualityAlarmAfterFailures) 次</small>}</MudTd>
+            <MudTd DataLabel="地址">@context.Device?.Name<small class="cell-secondary mono">@(context.AddressType)[@context.Address]</small>@if (_addressConflicts.TryGetValue(context.Id, out var conflicts)){<MudTooltip Text="@($"与 {string.Join("、", conflicts.Select(x => x.Name))} 的地址范围重叠")"><MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning">地址重叠</MudChip></MudTooltip>}</MudTd>
+            <MudTd DataLabel="类型">@context.DataType<small class="cell-secondary">@context.AccessMode</small></MudTd>
+            <MudTd DataLabel="当前值"><strong class="mono">@(value.CurrentValue is double number ? number.ToString(context.DataType == TagDataType.Float32 ? "F3" : "0.###") : value.CurrentValue?.ToString() ?? "—")</strong> @context.Unit</MudTd>
+            <MudTd DataLabel="质量"><MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@(value.Quality == TagQuality.Good ? Color.Success : value.Quality == TagQuality.Bad ? Color.Error : Color.Warning)">@value.Quality</MudChip><small class="cell-secondary" title="@value.LastError">@value.LastError</small></MudTd>
+            <MudTd DataLabel="更新时间" Class="mono">@(value.Timestamp?.ToLocalTime().ToString("HH:mm:ss.fff") ?? "—")</MudTd>
+            <MudTd DataLabel="操作"><MudIconButton Icon="@Icons.Material.Outlined.Refresh" title="手动读取" Size="Size.Small" Disabled="@_reading.Contains(context.Id)" OnClick="@(() => ReadAsync(context.Id))" /><MudIconButton Icon="@Icons.Material.Outlined.Publish" title="写入值" Size="Size.Small" Disabled="@(!(context.Enabled && context.AccessMode == AccessMode.ReadWrite))" OnClick="@(() => WriteAsync(context))" /><MudIconButton Icon="@Icons.Material.Outlined.Edit" title="编辑 Tag" Size="Size.Small" OnClick="@(() => EditAsync(context))" /><MudIconButton Icon="@Icons.Material.Outlined.Delete" Color="Color.Error" title="删除 Tag" Size="Size.Small" OnClick="@(() => DeleteAsync(context))" /></MudTd>
+        </RowTemplate>
+        <NoRecordsContent><MudText Class="pa-8">暂无符合条件的 Tag。</MudText></NoRecordsContent><PagerContent><MudTablePager RowsPerPageString="每页数量" /></PagerContent>
+    </MudTable>
+</MudPaper>
+<MudAlert Severity="Severity.Info" Dense Class="mt-4">所有地址均为零基偏移。启用且授权读写的 Coil / Holding Register Tag 可通过行内「写入值」受控写入（读回验证 + 审计）；绑定手动输出的 Tag 请改用手动输出页面操作。</MudAlert>
+@code {
+    private IReadOnlyList<Tag> _tags = []; private IReadOnlyList<Device> _devices = []; private readonly HashSet<Guid> _reading = [];
+    private IReadOnlyDictionary<Guid, IReadOnlyList<Tag>> _addressConflicts = new Dictionary<Guid, IReadOnlyList<Tag>>();
+    private HashSet<Tag> _selectedTags = [];
+    private bool _bulkBusy;
+    private bool HasActiveFilter => PageState.TagsDeviceId.HasValue || !string.IsNullOrWhiteSpace(PageState.TagsSearch);
+    private int VisibleTagCount => _tags.Count(Filter);
+
+    protected override async Task RefreshAsync()
+    {
+        _tags = await TagsService.GetAllAsync();
+        _devices = await Store.GetDevicesAsync();
+        _addressConflicts = TagService.FindAddressConflictsByTag(_tags);
+        _selectedTags.Clear();
+        if (PageState.TagsDeviceId is Guid deviceId && _devices.All(device => device.Id != deviceId))
+            PageState.TagsDeviceId = null;
+    }
+    private bool Filter(Tag tag) => (!PageState.TagsDeviceId.HasValue || tag.DeviceId == PageState.TagsDeviceId) && (string.IsNullOrWhiteSpace(PageState.TagsSearch) || tag.Name.Contains(PageState.TagsSearch, StringComparison.OrdinalIgnoreCase));
+    private void ClearFilters()
+    {
+        PageState.TagsDeviceId = null;
+        PageState.TagsSearch = "";
+    }
+
+    private static string? GetLimitSummary(Tag tag)
+    {
+        if (tag.AlarmHigh is null && tag.AlarmLow is null)
+            return null;
+        var unit = string.IsNullOrWhiteSpace(tag.Unit) ? "" : $" {tag.Unit}";
+        var range = (tag.AlarmLow, tag.AlarmHigh) switch
+        {
+            (double low, double high) => $"报警 {low:0.###} ~ {high:0.###}{unit}",
+            (double low, null) => $"报警 ≤ {low:0.###}{unit}",
+            (null, double high) => $"报警 ≥ {high:0.###}{unit}",
+            _ => ""
+        };
+        return tag.AlarmDeadband > 0 ? $"{range}（死区 {tag.AlarmDeadband:0.###}）" : range;
+    }
+
+    private async Task EditAsync(Tag? tag)
+    {
+        var dialog = await Dialogs.ShowAsync<TagDialog>(tag is null ? "新增 Tag" : "编辑 Tag",
+            new DialogParameters<TagDialog>
+            {
+                { x => x.Tag, tag },
+                { x => x.InitialDeviceId, tag is null ? PageState.TagsDeviceId : null }
+            },
+            new() { FullWidth = true, MaxWidth = MaxWidth.Medium, CloseButton = true });
+        await dialog.Result; await RefreshAsync();
+    }
+    private async Task ReadAsync(Guid id)
+    {
+        if (!_reading.Add(id)) return;
+        try { var value = await Runtime.GetTagValueAsync(id); Toast.Add(value.Quality == TagQuality.Good ? $"读取成功：{value.CurrentValue}" : value.LastError ?? "读取失败", value.Quality == TagQuality.Good ? Severity.Success : Severity.Error); }
+        catch (Exception ex) { Toast.Add(ex.Message, Severity.Error); }
+        finally { _reading.Remove(id); }
+    }
+    private async Task WriteAsync(Tag tag)
+    {
+        await Dialogs.ShowAsync<TagWriteDialog>($"写入 Tag · {tag.Name}",
+            new DialogParameters<TagWriteDialog> { { x => x.TagId, tag.Id } },
+            new() { FullWidth = true, MaxWidth = MaxWidth.Medium, CloseButton = true });
+    }
+    private async Task SetEnabledAsync(bool enabled)
+    {
+        if (_selectedTags.Count == 0 || _bulkBusy)
+            return;
+        _bulkBusy = true;
+        try
+        {
+            var action = enabled ? "启用" : "禁用";
+            var confirmed = await Dialogs.ShowMessageBox(
+                $"批量{action} Tag",
+                $"确定{action}选中的 {_selectedTags.Count} 个 Tag 吗？" +
+                (enabled ? "" : "禁用后这些 Tag 将停止采集并显示为不可用。"),
+                yesText: $"批量{action}", cancelText: "取消");
+            if (confirmed != true)
+                return;
+
+            var result = await TagsService.SetEnabledAsync(
+                _selectedTags.Select(x => x.Id).ToArray(), enabled);
+            if (result.Failed.Count == 0)
+            {
+                Toast.Add($"已{action} {result.Succeeded} 个 Tag", Severity.Success);
+            }
+            else
+            {
+                var details = string.Join("\n", result.Failed.Take(10)
+                    .Select(x => $"· {x.Name}：{x.Error}"));
+                await Dialogs.ShowMessageBox(
+                    $"批量{action}结果",
+                    $"成功 {result.Succeeded} 个，失败 {result.Failed.Count} 个：\n{details}" +
+                    (result.Failed.Count > 10 ? "\n（仅显示前 10 条）" : ""),
+                    yesText: "知道了");
+            }
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"批量操作失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _bulkBusy = false;
+        }
+    }
+
+    private async Task DeleteAsync(Tag tag)
+    {
+        if (await Dialogs.ShowMessageBox("删除 Tag", $"确认删除 {tag.Name}？", yesText: "删除", cancelText: "取消") != true) return;
+        try { await TagsService.DeleteAsync(tag.Id); Toast.Add("Tag 已删除", Severity.Success); await RefreshAsync(); }
+        catch (Exception ex) { Toast.Add(ex.Message, Severity.Error); }
+    }
+
+    private string GetExportDataUrl()
+    {
+        var deviceNames = _devices.ToDictionary(x => x.Id, x => x.Name);
+        var json = TagsService.ExportBundleJson(_tags, deviceNames);
+        return $"data:application/json;base64,{Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(json))}";
+    }
+
+    private async Task ImportAsync(InputFileChangeEventArgs args)
+    {
+        try
+        {
+            await using var stream = args.File.OpenReadStream(5_000_000);
+            using var reader = new StreamReader(stream);
+            var json = await reader.ReadToEndAsync();
+            var result = await TagsService.ImportBundleJsonAsync(json);
+            if (result.Failed == 0)
+            {
+                Toast.Add($"导入完成：成功 {result.Imported} 个 Tag", Severity.Success);
+            }
+            else
+            {
+                var details = string.Join("\n", result.Items
+                    .Where(x => x.Status != "已导入")
+                    .Take(10)
+                    .Select(x => $"· {x.Name}：{x.Message}"));
+                await Dialogs.ShowMessageBox(
+                    "导入结果",
+                    $"成功 {result.Imported} 个，未导入 {result.Failed} 个：\n{details}" +
+                    (result.Failed > 10 ? "\n（仅显示前 10 条）" : ""),
+                    yesText: "知道了");
+            }
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"导入失败：{ex.Message}", Severity.Error);
+        }
+    }
+}

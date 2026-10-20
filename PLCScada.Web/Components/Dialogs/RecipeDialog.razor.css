@@ -1,0 +1,62 @@
+.recipe-parameter-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.recipe-parameter-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(240px, .75fr);
+    align-items: center;
+    gap: 16px;
+    padding: 12px 14px;
+    border: 1px solid var(--mud-palette-divider);
+    border-radius: 9px;
+    background: color-mix(in srgb, var(--mud-palette-surface) 94%, var(--mud-palette-primary) 6%);
+}
+
+.recipe-parameter-info {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.recipe-parameter-info strong {
+    overflow: hidden;
+    color: var(--mud-palette-text-primary);
+    font-size: 13px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.recipe-parameter-info span,
+.recipe-parameter-info small {
+    color: var(--mud-palette-text-secondary);
+    font-size: 10px;
+}
+
+.recipe-parameter-value {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.recipe-parameter-value .mud-input-control {
+    flex: 1;
+    min-width: 0;
+}
+
+.recipe-unit {
+    color: var(--mud-palette-text-secondary);
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+@media (max-width: 700px) {
+    .recipe-parameter-row {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 8px;
+    }
+}

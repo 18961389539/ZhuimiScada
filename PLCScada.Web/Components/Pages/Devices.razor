@@ -1,0 +1,70 @@
+@page "/devices"
+@inherits LivePage
+@inject DeviceService DevicesService
+@inject IDialogService Dialogs
+@inject ISnackbar Toast
+@inject ISimulatorControl Simulator
+@inject PageUiState PageState
+<PageTitle>设备管理 · PLCScada</PageTitle>
+<PageHeading Section="DEVICES" title="设备管理" Description="配置设备连接，监测实时状态。各设备独立采集，异常时自动重连。">
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="@(() => EditAsync(null))">新增设备</MudButton>
+</PageHeading>
+@if (LoadError is not null) { <MudAlert Severity="Severity.Error">@LoadError</MudAlert> }
+@if (Simulator.Available)
+{ <MudAlert Severity="Severity.Info" Dense Class="mb-5">开发模拟模式 · 127.0.0.1:@Simulator.Port · Unit ID 1 · @(Simulator.Running ? "模拟器运行中" : "模拟器已停止") · SIM 设备为测试数据。</MudAlert> }
+<div class="mini-stats"><span><strong>@_devices.Count</strong> 全部设备</span><span><strong class="text-good">@_devices.Count(d => DevicesService.GetState(d.Id).Status == ConnectionStatus.Online)</strong> 在线</span><span><strong>@_devices.Count(d => !d.Enabled)</strong> 已禁用</span><span class="live-label"><span class="status-dot"></span> 每秒刷新</span></div>
+<MudPaper Outlined Elevation="0" Class="table-panel">
+    <MudTable Items="_devices" Filter="Filter" Hover Elevation="0" Breakpoint="Breakpoint.Md">
+        <ToolBarContent><MudText Typo="Typo.h6">设备列表</MudText><MudSpacer /><MudTextField T="string" @bind-Value="PageState.DevicesSearch" Immediate Placeholder="搜索名称或 IP 地址" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Variant="Variant.Outlined" Margin="Margin.Dense" Class="search-field" /></ToolBarContent>
+        <HeaderContent><MudTh><MudTableSortLabel SortBy="new Func<Device, object>(x => x.Name)">设备名称</MudTableSortLabel></MudTh><MudTh>连接地址 / 协议</MudTh><MudTh>Unit</MudTh><MudTh>周期</MudTh><MudTh>状态</MudTh><MudTh>最近通信 / 错误</MudTh><MudTh>操作</MudTh></HeaderContent>
+        <RowTemplate>
+            @{ var state = DevicesService.GetState(context.Id); }
+            <MudTd DataLabel="设备名称"><strong>@context.Name</strong><small class="cell-secondary">@context.Description</small></MudTd>
+            <MudTd DataLabel="地址"><span class="mono">@context.IpAddress:@context.Port</span><small class="cell-secondary">@context.Protocol</small></MudTd>
+            <MudTd DataLabel="Unit">@context.UnitId</MudTd><MudTd DataLabel="周期">@context.PollInterval ms</MudTd>
+            <MudTd DataLabel="状态"><DeviceStatus Status="@(!context.Enabled ? ConnectionStatus.Disabled : state.Status)" /></MudTd>
+            <MudTd DataLabel="最近通信"><span class="mono">@(state.LastCommunicationTime?.ToLocalTime().ToString("HH:mm:ss") ?? "—")</span><small class="cell-secondary error-message" title="@state.LastError">@(state.LastError ?? (state.LatencyMs is double ms ? $"{ms:F0} ms" : "尚无通信记录"))</small></MudTd>
+            <MudTd DataLabel="操作"><div class="row-actions">
+                <MudIconButton Icon="@Icons.Material.Outlined.Edit" Size="Size.Small" title="编辑设备" OnClick="@(() => EditAsync(context))" />
+                <MudIconButton Icon="@Icons.Material.Outlined.NetworkCheck" Color="Color.Primary" Size="Size.Small" title="测试通信" Disabled="@_busy.Contains(context.Id)" OnClick="@(() => TestAsync(context))" />
+                <MudIconButton Icon="@(state.Status == ConnectionStatus.Online ? Icons.Material.Outlined.LinkOff : Icons.Material.Outlined.Link)" Size="Size.Small" title="@(state.Status == ConnectionStatus.Online ? "手动断开" : "连接设备")" Disabled="@(_busy.Contains(context.Id) || !context.Enabled)" OnClick="@(() => ToggleConnectionAsync(context))" />
+                <MudIconButton Icon="@(context.Enabled ? Icons.Material.Outlined.PauseCircle : Icons.Material.Outlined.PlayCircle)" Size="Size.Small" title="@(context.Enabled ? "禁用设备" : "启用设备")" Disabled="@_busy.Contains(context.Id)" OnClick="@(() => RunAsync(context.Id, () => DevicesService.SetEnabledAsync(context.Id, !context.Enabled), "设备状态已更新"))" />
+                <MudIconButton Icon="@Icons.Material.Outlined.Delete" Color="Color.Error" Size="Size.Small" title="删除设备" OnClick="@(() => DeleteAsync(context))" />
+            </div></MudTd>
+        </RowTemplate>
+        <NoRecordsContent><MudText Class="pa-8">暂无设备。点击“新增设备”建立连接。</MudText></NoRecordsContent>
+        <PagerContent><MudTablePager RowsPerPageString="每页数量" /></PagerContent>
+    </MudTable>
+</MudPaper>
+<MudText Typo="Typo.caption" Class="mt-4 muted">测试通信使用独立连接；手动断开会暂停自动重连，点击“连接设备”恢复。</MudText>
+@code {
+    private IReadOnlyList<Device> _devices = []; private readonly HashSet<Guid> _busy = [];
+    protected override async Task RefreshAsync() => _devices = await DevicesService.GetAllAsync();
+    private bool Filter(Device d) => string.IsNullOrWhiteSpace(PageState.DevicesSearch) || d.Name.Contains(PageState.DevicesSearch, StringComparison.OrdinalIgnoreCase) || d.IpAddress.Contains(PageState.DevicesSearch);
+    private async Task EditAsync(Device? device)
+    {
+        var parameters = new DialogParameters<DeviceDialog> { { x => x.Device, device } };
+        var dialog = await Dialogs.ShowAsync<DeviceDialog>(device is null ? "新增 Modbus TCP 设备" : "编辑设备", parameters, new() { FullWidth = true, MaxWidth = MaxWidth.Small, CloseButton = true });
+        await dialog.Result; await RefreshAsync();
+    }
+    private async Task DeleteAsync(Device device)
+    {
+        if (await Dialogs.ShowMessageBox("删除设备", $"确认删除“{device.Name}”？关联 Tag 存在时无法删除。", yesText: "删除", cancelText: "取消") == true)
+            await RunAsync(device.Id, () => DevicesService.DeleteAsync(device.Id), "设备已删除");
+    }
+    private async Task TestAsync(Device device) => await RunAsync(device.Id, async () =>
+    {
+        var result = await DevicesService.TestAsync(device.Id);
+        Toast.Add($"{result.Message}（{result.ElapsedMs:F0} ms）", result.Success ? Severity.Success : Severity.Error);
+    });
+    private async Task ToggleConnectionAsync(Device device) => await RunAsync(device.Id,
+        () => DevicesService.GetState(device.Id).Status == ConnectionStatus.Online ? DevicesService.DisconnectAsync(device.Id) : DevicesService.ConnectAsync(device.Id), "连接状态已更新");
+    private async Task RunAsync(Guid id, Func<Task> action, string? success = null)
+    {
+        if (!_busy.Add(id)) return;
+        try { await action(); if (success is not null) Toast.Add(success, Severity.Success); await RefreshAsync(); }
+        catch (Exception ex) { Toast.Add(ex.Message, Severity.Error); }
+        finally { _busy.Remove(id); }
+    }
+}
+

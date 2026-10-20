@@ -1,0 +1,37 @@
+.kpi-range {
+    min-width: 150px;
+}
+
+.kpi-card {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    border: 1px solid var(--mud-palette-divider);
+    border-radius: 8px;
+    background: var(--mud-palette-surface);
+    font-size: 12px;
+    color: var(--mud-palette-text-secondary);
+}
+
+.kpi-card strong {
+    font-size: 18px;
+    color: var(--mud-palette-text-primary);
+    font-variant-numeric: tabular-nums;
+}
+
+.kpi-export {
+    display: inline-flex;
+    align-items: center;
+    min-height: 34px;
+    padding: 0 10px;
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: 8px;
+    font-size: 12px;
+    text-decoration: none;
+    color: var(--mud-palette-text-primary);
+}
+
+.kpi-export:hover {
+    border-color: var(--mud-palette-primary);
+}

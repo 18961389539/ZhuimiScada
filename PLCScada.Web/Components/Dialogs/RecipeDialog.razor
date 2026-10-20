@@ -1,0 +1,363 @@
+@inject RecipeService Recipes
+@inject DeviceService Devices
+
+<MudDialog>
+    <DialogContent>
+        <MudAlert Severity="Severity.Info" Dense Class="mb-3">
+            这里只保存 SCADA 本地配方模板，不会写入 PLC。数值项按工程值保存，Bool/Coil 项按开或关保存。
+        </MudAlert>
+        @if (_error is not null)
+        {
+            <MudAlert Severity="Severity.Error" Dense Class="mb-3">@_error</MudAlert>
+        }
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate Color="Color.Primary" />
+        }
+        else
+        {
+            <MudTextField T="string" @bind-Value="_name" Label="配方名称"
+                          Variant="Variant.Outlined" Margin="Margin.Dense"
+                          MaxLength="100" Immediate="true" AutoFocus="true" />
+            <MudTextField T="string" @bind-Value="_description" Label="配方说明"
+                          Variant="Variant.Outlined" Margin="Margin.Dense"
+                          MaxLength="500" Lines="2" Immediate="true" Class="mt-3" />
+            <MudTextField T="string" @bind-Value="_changeNote" Label="变更说明（本次修改原因）"
+                          Variant="Variant.Outlined" Margin="Margin.Dense"
+                          MaxLength="200" Immediate="true" Class="mt-3"
+                          HelperText="@GetChangeNoteHelper()" />
+
+            <MudSelect T="Guid?" Value="_deviceId" ValueChanged="ChangeDeviceAsync"
+                       Label="所属设备" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mt-3">
+                <MudSelectItem T="Guid?" Value="@((Guid?)null)">请选择设备</MudSelectItem>
+                @foreach (var device in _devices)
+                {
+                    <MudSelectItem T="Guid?" Value="@((Guid?)device.Id)">
+                        @device.Name@(device.Enabled ? "" : "（已禁用）")
+                    </MudSelectItem>
+                }
+            </MudSelect>
+
+            <MudDivider Class="my-4" />
+            <MudText Typo="Typo.subtitle2" Class="mb-2">配方设定项</MudText>
+            <MudGrid Spacing="2" Class="align-center">
+                <MudItem xs="12" md="9">
+                    <MudSelect T="Guid?" Value="_tagToAdd" ValueChanged="ChangeTagToAdd"
+                               Label="添加可写设定 Tag" Variant="Variant.Outlined" Margin="Margin.Dense"
+                               Disabled="@(_deviceId is null)">
+                        @foreach (var tag in _eligibleTags)
+                        {
+                            <MudSelectItem T="Guid?" Value="@((Guid?)tag.Id)"
+                                           Disabled="@_parameters.Any(x => x.Tag.Id == tag.Id)">
+                                @tag.Name · @GetDeviceName(tag.DeviceId) · @GetAddressLabel(tag) · @tag.DataType
+                            </MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" md="3">
+                    <MudButton FullWidth Variant="Variant.Outlined" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Outlined.Add"
+                               Disabled="@(_tagToAdd is null || _parameters.Any(x => x.Tag.Id == _tagToAdd))"
+                               OnClick="AddParameter">
+                        添加设定项
+                    </MudButton>
+                </MudItem>
+            </MudGrid>
+
+            @if (_deviceId is null)
+            {
+                <MudAlert Severity="Severity.Info" Dense Class="mt-3">请先选择配方所属设备。</MudAlert>
+            }
+            else if (_eligibleTags.Count == 0)
+            {
+                <MudAlert Severity="Severity.Warning" Dense Class="mt-3">
+                    当前没有可选 Tag。请启用读写数值 Holding Register 或 Bool/Coil Tag；已绑定到手动输出的 Tag 不可用于配方。
+                </MudAlert>
+            }
+            @if (_parameters.Any(x => !x.IsEligible))
+            {
+                <MudAlert Severity="Severity.Warning" Dense Class="mt-3">
+                    有设定项对应的 Tag 已禁用或不再符合配方条件。请移除这些项目后再保存。
+                </MudAlert>
+            }
+
+            @if (_parameters.Count == 0)
+            {
+                <MudAlert Severity="Severity.Info" Dense Class="mt-3">尚未添加设定项；配方至少需要一个数值或开关 Tag。</MudAlert>
+            }
+            else
+            {
+                <div class="recipe-parameter-list">
+                    @for (var parameterIndex = 0; parameterIndex < _parameters.Count; parameterIndex++)
+                    {
+                        var parameter = _parameters[parameterIndex];
+                        <div @key="parameter.Tag.Id" class="recipe-parameter-row">
+                            <div class="recipe-parameter-info">
+                                <strong>@parameter.Tag.Name</strong>
+                                <span>@GetDeviceName(parameter.Tag.DeviceId) · @GetAddressLabel(parameter.Tag) · @parameter.Tag.DataType</span>
+                                <small>
+                                    @if (parameter.IsBoolean)
+                                    {
+                                        <text>Bool 设定 · 开 / 关</text>
+                                    }
+                                    else
+                                    {
+                                        <text>工程量程：@(parameter.Tag.MinValue?.ToString("0.###") ?? "—")
+                                            至 @(parameter.Tag.MaxValue?.ToString("0.###") ?? "—")
+                                            @(!string.IsNullOrWhiteSpace(parameter.Tag.Unit) ? $" {parameter.Tag.Unit}" : "")</text>
+                                    }
+                                </small>
+                            </div>
+                            <div class="recipe-parameter-value">
+                                @if (parameter.IsBoolean)
+                                {
+                                    <MudSwitch T="bool" Value="@(parameter.BooleanValue ?? false)"
+                                               ValueChanged="value => parameter.BooleanValue = value"
+                                               Color="Color.Primary" Label="开启"
+                                               Disabled="@(!parameter.IsEligible)" />
+                                }
+                                else
+                                {
+                                    <MudNumericField T="double" Value="@(parameter.EngineeringValue ?? 0)"
+                                                     ValueChanged="value => parameter.EngineeringValue = value"
+                                                     Label="工程值" Variant="Variant.Outlined" Margin="Margin.Dense"
+                                                     Immediate="true" Format="0.###"
+                                                     Error="@(GetEngineeringValueError(parameter) is not null)"
+                                                     ErrorText="@GetEngineeringValueError(parameter)"
+                                                     Disabled="@(!parameter.IsEligible)" />
+                                    @if (!string.IsNullOrWhiteSpace(parameter.Tag.Unit))
+                                    {
+                                        <span class="recipe-unit">@parameter.Tag.Unit</span>
+                                    }
+                                }
+                                <MudIconButton Icon="@Icons.Material.Outlined.ArrowUpward"
+                                               Size="Size.Small"
+                                               title="上移（调整设定项顺序）"
+                                               aria-label="@($"上移{parameter.Tag.Name}")"
+                                               Disabled="@(parameterIndex == 0)"
+                                               OnClick="() => MoveParameter(parameterIndex, -1)" />
+                                <MudIconButton Icon="@Icons.Material.Outlined.ArrowDownward"
+                                               Size="Size.Small"
+                                               title="下移（调整设定项顺序）"
+                                               aria-label="@($"下移{parameter.Tag.Name}")"
+                                               Disabled="@(parameterIndex == _parameters.Count - 1)"
+                                               OnClick="() => MoveParameter(parameterIndex, 1)" />
+                                <MudIconButton Icon="@Icons.Material.Outlined.DeleteOutline"
+                                               Color="Color.Error" Size="Size.Small"
+                                               title="@($"移除“{parameter.Tag.Name}”设定项")"
+                                               aria-label="@($"移除{parameter.Tag.Name}")"
+                                               OnClick="() => RemoveParameter(parameter)" />
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Disabled="@(_saving || _loading)">取消</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                   OnClick="SaveAsync"
+                   Disabled="@(_saving || _loading || _deviceId is null || string.IsNullOrWhiteSpace(_name) ||
+                               _parameters.Count == 0 ||
+                               _parameters.Any(x => !x.IsEligible || GetEngineeringValueError(x) is not null))">
+            @(_saving ? "保存中…" : "保存本地配方")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] public IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public Recipe? Item { get; set; }
+    [Parameter] public Guid? InitialDeviceId { get; set; }
+
+    private sealed class ParameterEdit(Tag tag, double? engineeringValue, bool? booleanValue, bool isEligible)
+    {
+        public Tag Tag { get; } = tag;
+        public double? EngineeringValue { get; set; } = engineeringValue;
+        public bool? BooleanValue { get; set; } = booleanValue;
+        public bool IsBoolean => Tag.DataType == TagDataType.Bool;
+        public bool IsEligible { get; set; } = isEligible;
+    }
+
+    private IReadOnlyList<Tag> _eligibleTags = [];
+    private IReadOnlyList<Device> _devices = [];
+    private readonly List<ParameterEdit> _parameters = [];
+    private Guid? _deviceId;
+    private Guid? _tagToAdd;
+    private string _name = "";
+    private string _description = "";
+    private string _changeNote = "";
+    private bool _loading = true;
+    private bool _saving;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _name = Item?.Name ?? "";
+        _description = Item?.Description ?? "";
+        _changeNote = Item is null ? "初始版本" : "";
+        try
+        {
+            _devices = await Devices.GetAllAsync();
+            _deviceId = Item?.DeviceId ?? Item?.Parameters
+                .Select(x => x.Tag?.DeviceId)
+                .FirstOrDefault(x => x.HasValue);
+            if (_deviceId is null && InitialDeviceId is Guid initialId && _devices.Any(x => x.Id == initialId))
+                _deviceId = initialId;
+            if (_deviceId is null && _devices.Count(x => x.Enabled) == 1)
+                _deviceId = _devices.Single(x => x.Enabled).Id;
+            _eligibleTags = await Recipes.GetEligibleTagsAsync(_deviceId);
+            if (Item is { } recipe)
+            {
+                foreach (var parameter in recipe.Parameters)
+                {
+                    if (parameter.Tag is { } tag)
+                    {
+                        _parameters.Add(new ParameterEdit(
+                            tag,
+                            parameter.EngineeringValue,
+                            parameter.BooleanValue,
+                            tag.DeviceId == _deviceId && _eligibleTags.Any(x => x.Id == tag.Id)));
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void ChangeTagToAdd(Guid? tagId)
+    {
+        _tagToAdd = tagId;
+        _error = null;
+    }
+
+    private async Task ChangeDeviceAsync(Guid? deviceId)
+    {
+        _deviceId = deviceId;
+        _tagToAdd = null;
+        _error = null;
+        try
+        {
+            _eligibleTags = await Recipes.GetEligibleTagsAsync(_deviceId);
+            foreach (var parameter in _parameters)
+                parameter.IsEligible = parameter.Tag.DeviceId == _deviceId &&
+                                       _eligibleTags.Any(x => x.Id == parameter.Tag.Id);
+        }
+        catch (Exception ex)
+        {
+            _eligibleTags = [];
+            _error = ex.Message;
+        }
+    }
+
+    private void AddParameter()
+    {
+        if (_tagToAdd is not Guid tagId ||
+            _eligibleTags.SingleOrDefault(x => x.Id == tagId) is not Tag tag ||
+            _parameters.Any(x => x.Tag.Id == tagId))
+            return;
+
+        _parameters.Add(tag.DataType == TagDataType.Bool
+            ? new ParameterEdit(tag, null, false, true)
+            : new ParameterEdit(tag, GetInitialValue(tag), null, true));
+        _tagToAdd = null;
+    }
+
+    private void RemoveParameter(ParameterEdit parameter) => _parameters.Remove(parameter);
+
+    private void MoveParameter(int index, int direction)
+    {
+        var target = index + direction;
+        if (target < 0 || target >= _parameters.Count)
+            return;
+        (_parameters[index], _parameters[target]) = (_parameters[target], _parameters[index]);
+    }
+
+    private string GetDeviceName(Guid? deviceId)
+        => deviceId is Guid id
+            ? _devices.FirstOrDefault(device => device.Id == id)?.Name ?? "设备不存在"
+            : "未关联设备";
+
+    private static string? GetEngineeringValueError(ParameterEdit parameter)
+    {
+        if (parameter.IsBoolean)
+            return null;
+        return parameter.EngineeringValue is double value
+            ? RecipeService.GetEngineeringValueError(parameter.Tag, value)
+            : $"Tag“{parameter.Tag.Name}”需要有效的数值工程值。";
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_saving || _loading || _parameters.Count == 0 ||
+            _parameters.Any(x => !x.IsEligible || GetEngineeringValueError(x) is not null) ||
+            string.IsNullOrWhiteSpace(_name))
+            return;
+
+        _saving = true;
+        _error = null;
+        try
+        {
+            var id = await Recipes.SaveAsync(
+                Item?.Id,
+                Item?.Revision,
+                _deviceId,
+                _name,
+                _description,
+                _parameters.Select(x => new RecipeService.ParameterInput(
+                    x.Tag.Id,
+                    x.IsBoolean ? null : x.EngineeringValue,
+                    x.IsBoolean ? x.BooleanValue ?? false : null)).ToArray(),
+                changeNote: _changeNote);
+            Dialog.Close(DialogResult.Ok(id));
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private static string GetAddressLabel(Tag tag)
+    {
+        if (tag.AddressType == AddressType.Coil)
+            return $"Coil[{tag.Address}]";
+
+        var words = tag.DataType switch
+        {
+            TagDataType.Float64 => 4,
+            TagDataType.Float32 or TagDataType.Int32 or TagDataType.UInt32 => 2,
+            _ => 1
+        };
+        return words == 1
+            ? $"HoldingRegister[{tag.Address}]"
+            : $"HoldingRegister[{tag.Address}–{tag.Address + words - 1}]";
+    }
+
+    private static double GetInitialValue(Tag tag)
+    {
+        if (tag.MinValue is double minimum)
+            return minimum;
+        if (tag.MaxValue is double maximum && maximum < 0)
+            return maximum;
+        return 0;
+    }
+
+    private string GetChangeNoteHelper()
+        => Item is { } recipe
+            ? $"保存后生成 v{recipe.Revision + 1}，变更说明将随该版本存档，可在版本历史中查看。"
+            : "保存后生成 v1，变更说明将随该版本存档，可在版本历史中查看。";
+
+    private void Cancel() => Dialog.Cancel();
+}

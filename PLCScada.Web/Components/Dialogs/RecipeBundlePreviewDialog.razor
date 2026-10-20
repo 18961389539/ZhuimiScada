@@ -1,0 +1,84 @@
+@inject RecipeService Recipes
+
+<MudDialog>
+    <DialogContent>
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate Color="Color.Primary" />
+        }
+        else if (_error is not null)
+        {
+            <MudAlert Severity="Severity.Error" Dense>@_error</MudAlert>
+        }
+        else if (_preview is not null)
+        {
+            <MudAlert Severity="@(_preview.FailedCount == 0 ? Severity.Info : Severity.Warning)" Dense Class="mb-3">
+                将直接导入 @_preview.ImportableCount 个，重命名导入 @_preview.RenamedCount 个，
+                无法导入 @_preview.FailedCount 个。预览不写入任何数据，确认后才会执行导入。
+            </MudAlert>
+            <MudTable Items="_preview.Items" Dense Hover Elevation="0"
+                      Breakpoint="Breakpoint.Sm" Class="recipe-apply-table">
+                <HeaderContent>
+                    <MudTh>配方</MudTh>
+                    <MudTh>处理方式</MudTh>
+                    <MudTh>说明</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="配方">@context.Name</MudTd>
+                    <MudTd DataLabel="处理方式">
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                 Color="@GetActionColor(context.Action)">
+                            @context.Action
+                        </MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="说明"><small class="recipe-apply-error">@context.Message</small></MudTd>
+                </RowTemplate>
+            </MudTable>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Disabled="@_loading">取消</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                   Disabled="@(_loading || _preview is not { ImportableCount: > 0 } && _preview is not { RenamedCount: > 0 })"
+                   OnClick="Confirm">
+            确认导入@( _preview is null ? "" : $" {_preview.ImportableCount + _preview.RenamedCount} 个")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] public IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public string Json { get; set; } = "";
+
+    private RecipeService.RecipeImportPreviewResult? _preview;
+    private bool _loading = true;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _preview = await Recipes.PreviewBundleImportAsync(Json);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static Color GetActionColor(string action) => action switch
+    {
+        "直接导入" => Color.Success,
+        "重命名导入" => Color.Warning,
+        "未导入" => Color.Error,
+        _ => Color.Default
+    };
+
+    private void Confirm() => Dialog.Close(DialogResult.Ok(true));
+
+    private void Cancel() => Dialog.Cancel();
+}

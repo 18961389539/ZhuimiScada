@@ -1,0 +1,68 @@
+@using PLCScada.Application
+
+<MudDialog>
+    <TitleContent>
+        <div class="d-flex align-center gap-2">
+            <MudText Typo="Typo.h6">试抓预览</MudText>
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info">未写入</MudChip>
+        </div>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.caption" Class="muted mb-3">
+            以下内容来自当前点位读数，套用了<b>已保存配置</b>中的别名 / 单位 / 小数位（未保存的修改不参与预览）；
+            此时还没有写入数据库，也不会复位触发位。
+        </MudText>
+        <MudSimpleTable Dense Elevation="0" Class="mb-3">
+            <tbody>
+                <tr><td style="width:76px">规则</td><td>@Preview.RuleName</td></tr>
+                <tr><td>SN</td><td class="mono">@(string.IsNullOrWhiteSpace(Preview.Sn) ? "—" : Preview.Sn)</td></tr>
+                <tr><td>设备</td><td>@(string.IsNullOrWhiteSpace(Preview.DeviceName) ? "—" : Preview.DeviceName)</td></tr>
+                <tr><td>时间</td><td class="mono">@Preview.CapturedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</td></tr>
+            </tbody>
+        </MudSimpleTable>
+
+        <MudSimpleTable Dense Elevation="0">
+            <thead>
+                <tr><th>点位</th><th>值</th><th>质量</th><th>必填</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var item in Preview.Values)
+                {
+                    <tr>
+                        <td>@item.Name</td>
+                        <td class="mono">@(string.IsNullOrWhiteSpace(item.Value) ? "—" : item.Value)</td>
+                        <td>
+                            <MudText Typo="Typo.caption" Color="@QualityColor(item.Quality)">@item.Quality</MudText>
+                        </td>
+                        <td>@(item.Required ? "是" : "—")</td>
+                    </tr>
+                }
+            </tbody>
+        </MudSimpleTable>
+
+        @if (MissingRequired > 0)
+        {
+            <MudAlert Severity="Severity.Warning" Dense Class="mt-3">
+                @MissingRequired 个必填项质量异常，写入后这条追溯记录会标记为不完整。
+            </MudAlert>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => Dialog.Close(false)">仅预览，不写入</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="() => Dialog.Close(true)">写入快照</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] public IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public SnapshotPreview Preview { get; set; } = default!;
+
+    private int MissingRequired => Preview.MissingRequiredCount;
+
+    private static Color QualityColor(string quality) => quality switch
+    {
+        "Good" => Color.Success,
+        "Uncertain" => Color.Warning,
+        _ => Color.Error
+    };
+}

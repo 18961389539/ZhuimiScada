@@ -1,0 +1,135 @@
+@inject IScadaStore Store
+@inject ISnackbar Toast
+
+<MudDialog>
+    <DialogContent>
+        <MudAlert Severity="Severity.Info" Dense Class="mb-3">
+            抑制按设备拦截“新产生”的报警（设备通信、Tag 限值、读取质量、自定义定义全覆盖），到期自动失效。
+            已存在的报警不会被清除——处理单条已发生报警请用「搁置」。
+        </MudAlert>
+        <div class="d-flex align-center flex-wrap gap-2 mb-3">
+            <MudSelect T="Guid?" Value="_deviceId" ValueChanged="OnDeviceChanged" Label="设备"
+                       Variant="Variant.Outlined" Margin="Margin.Dense" Dense Class="suppress-select">
+                @foreach (var device in _devices)
+                {
+                    <MudSelectItem T="Guid?" Value="@((Guid?)device.Id)">@device.Name</MudSelectItem>
+                }
+            </MudSelect>
+            <MudSelect T="int" @bind-Value="_minutes" Label="时长"
+                       Variant="Variant.Outlined" Margin="Margin.Dense" Dense Class="suppress-minutes">
+                <MudSelectItem T="int" Value="5">5 分钟</MudSelectItem>
+                <MudSelectItem T="int" Value="15">15 分钟</MudSelectItem>
+                <MudSelectItem T="int" Value="30">30 分钟</MudSelectItem>
+                <MudSelectItem T="int" Value="60">60 分钟</MudSelectItem>
+                <MudSelectItem T="int" Value="120">120 分钟</MudSelectItem>
+            </MudSelect>
+            <MudTextField T="string" @bind-Value="_reason" Immediate="true" MaxLength="200"
+                          Label="理由（必填）" Variant="Variant.Outlined"
+                          Margin="Margin.Dense" Class="flex-grow-1" Style="min-width: 200px" />
+            <MudButton Variant="Variant.Filled" Color="Color.Warning"
+                       Disabled="@(_deviceId is null || string.IsNullOrWhiteSpace(_reason) || _busy)"
+                       OnClick="AddAsync">
+                开始抑制
+            </MudButton>
+        </div>
+        <MudTable Items="_items" Dense Hover Elevation="0" Breakpoint="Breakpoint.Sm">
+            <HeaderContent>
+                <MudTh>设备</MudTh>
+                <MudTh>状态</MudTh>
+                <MudTh>开始时间</MudTh>
+                <MudTh>理由</MudTh>
+                <MudTh>操作</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>@context.Device?.Name</MudTd>
+                <MudTd>
+                    @if (IsActive(context))
+                    {
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="Color.Warning">
+                            抑制中 · 剩 @RemainingMinutes(context) 分
+                        </MudChip>
+                    }
+                    else
+                    {
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">已过期</MudChip>
+                    }
+                </MudTd>
+                <MudTd Class="mono">@context.CreatedAt.ToLocalTime().ToString("MM-dd HH:mm")</MudTd>
+                <MudTd>@context.Reason</MudTd>
+                <MudTd>
+                    <MudIconButton Icon="@Icons.Material.Outlined.DeleteOutline" Size="Size.Small"
+                                   Color="Color.Error" title="解除抑制"
+                                   OnClick="@(() => RemoveAsync(context))" />
+                </MudTd>
+            </RowTemplate>
+            <NoRecordsContent><MudText Class="pa-4">当前没有任何报警抑制。</MudText></NoRecordsContent>
+        </MudTable>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Close">关闭</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] public IMudDialogInstance Dialog { get; set; } = default!;
+
+    private IReadOnlyList<Device> _devices = [];
+    private IReadOnlyList<AlarmSuppression> _items = [];
+    private Guid? _deviceId;
+    private int _minutes = 30;
+    private string _reason = "";
+    private bool _busy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _devices = (await Store.GetDevicesAsync()).Where(x => x.Enabled).ToArray();
+        _deviceId = _devices.FirstOrDefault()?.Id;
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync() => _items = await Store.GetSuppressionsAsync();
+
+    private void OnDeviceChanged(Guid? id) => _deviceId = id;
+
+    private static bool IsActive(AlarmSuppression suppression) => suppression.Until > DateTimeOffset.UtcNow;
+
+    private static int RemainingMinutes(AlarmSuppression suppression)
+        => Math.Max(0, (int)Math.Ceiling((suppression.Until - DateTimeOffset.UtcNow).TotalMinutes));
+
+    private async Task AddAsync()
+    {
+        if (_deviceId is not Guid deviceId || string.IsNullOrWhiteSpace(_reason) || _busy) return;
+        _busy = true;
+        try
+        {
+            await Store.AddSuppressionAsync(deviceId, _minutes, _reason);
+            Toast.Add($"已抑制该设备报警 {_minutes} 分钟", Severity.Success);
+            _reason = "";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"抑制失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task RemoveAsync(AlarmSuppression suppression)
+    {
+        try
+        {
+            await Store.RemoveSuppressionAsync(suppression.Id);
+            Toast.Add("已解除抑制", Severity.Success);
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"解除失败：{ex.Message}", Severity.Error);
+        }
+    }
+
+    private void Close() => Dialog.Close();
+}

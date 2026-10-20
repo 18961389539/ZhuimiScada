@@ -1,0 +1,732 @@
+.hmi-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 0 0 15px;
+}
+
+.hmi-dashboard {
+    display: flex;
+    flex-direction: column;
+    gap: 17px;
+}
+
+.hmi-overview-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.55fr) minmax(260px, .85fr);
+    gap: 13px;
+}
+
+.hmi-overview-grid.is-single {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.hmi-control-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 1px;
+    flex-shrink: 0;
+}
+
+.hmi-control-actions--panel {
+    position: absolute;
+    z-index: 1;
+    top: 7px;
+    right: 7px;
+}
+
+.hmi-control-actions .mud-icon-button-root,
+.hmi-item-actions .mud-icon-button-root {
+    width: 28px;
+    height: 28px;
+}
+
+.hmi-item-actions {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 1px;
+    flex-shrink: 0;
+}
+
+.hmi-state-primary {
+    padding-right: 64px;
+}
+
+.hmi-total-meta {
+    padding-right: 64px;
+}
+
+.hmi-state-panel {
+    --state-accent: var(--mud-palette-primary);
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(260px, .82fr) minmax(0, 1.18fr);
+    gap: 24px;
+    min-height: 220px;
+    padding: clamp(18px, 2.4vw, 30px);
+    overflow: hidden;
+    border: 1px solid color-mix(in srgb, var(--state-accent) 38%, var(--mud-palette-divider));
+    border-radius: 12px;
+    background:
+        radial-gradient(ellipse at 4% 0%, color-mix(in srgb, var(--state-accent) 13%, transparent), transparent 58%),
+        var(--mud-palette-surface);
+}
+
+.hmi-state-panel::before {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 3px;
+    background: var(--state-accent);
+    content: "";
+}
+
+.is-state-standby { --state-accent: var(--mud-palette-info); }
+.is-state-running { --state-accent: var(--mud-palette-primary); }
+.is-state-pass { --state-accent: var(--mud-palette-success); }
+.is-state-alarm,
+.is-state-fault { --state-accent: var(--mud-palette-error); }
+.is-state-warning,
+.is-state-unknown { --state-accent: var(--mud-palette-warning); }
+
+.hmi-total-panel {
+    --result-accent: var(--mud-palette-warning);
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 220px;
+    padding: clamp(17px, 2vw, 24px);
+    overflow: hidden;
+    border: 1px solid color-mix(in srgb, var(--result-accent) 42%, var(--mud-palette-divider));
+    border-radius: 12px;
+    background:
+        radial-gradient(ellipse at 100% 0%, color-mix(in srgb, var(--result-accent) 14%, transparent), transparent 62%),
+        var(--mud-palette-surface);
+}
+
+.hmi-total-panel::before {
+    position: absolute;
+    inset: 0 0 auto;
+    height: 3px;
+    background: var(--result-accent);
+    content: "";
+}
+
+.hmi-total-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.hmi-total-meta .hmi-overline {
+    min-width: 0;
+    font-size: 10px;
+}
+
+.hmi-total-content {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 13px 0 10px;
+}
+
+.hmi-total-content h2 {
+    margin: 0 0 5px;
+    color: var(--mud-palette-text-secondary);
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.hmi-total-value {
+    color: var(--result-accent);
+    font-size: clamp(27px, 3vw, 36px);
+    font-weight: 650;
+    letter-spacing: -.04em;
+    line-height: 1.15;
+}
+
+.hmi-total-code {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+    color: var(--mud-palette-text-secondary);
+    font-size: 9px;
+    white-space: nowrap;
+}
+
+.hmi-total-code strong {
+    color: var(--mud-palette-text-primary);
+    font-family: var(--font-mono, monospace);
+    font-size: 22px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+}
+
+.hmi-total-foot {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    padding-top: 9px;
+    border-top: 1px solid var(--mud-palette-divider);
+    color: var(--mud-palette-text-secondary);
+    font-size: 10px;
+}
+
+.hmi-total-legend {
+    display: flex;
+    gap: 12px;
+    margin-top: 8px;
+    color: var(--mud-palette-text-secondary);
+    font-family: var(--font-mono, monospace);
+    font-size: 10px;
+}
+
+.hmi-total-legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.hmi-total-legend i {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+}
+
+.hmi-total-legend .is-ok { background: var(--mud-palette-success); }
+.hmi-total-legend .is-ng { background: var(--mud-palette-error); }
+
+.hmi-state-primary {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-width: 0;
+}
+
+.hmi-overline {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--state-accent);
+    font-family: var(--font-mono, monospace);
+    font-size: 10px;
+    letter-spacing: .12em;
+}
+
+.hmi-state-primary h2 {
+    margin: 12px 0 4px;
+    color: var(--mud-palette-text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.hmi-state-value {
+    overflow-wrap: anywhere;
+    color: var(--state-accent);
+    font-size: clamp(27px, 3.5vw, 42px);
+    font-weight: 650;
+    letter-spacing: -.035em;
+    line-height: 1.18;
+}
+
+.hmi-state-foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 9px 15px;
+    margin-top: 15px;
+}
+
+.hmi-state-code,
+.hmi-timestamp,
+.hmi-card-time {
+    color: var(--mud-palette-text-secondary);
+    font-family: var(--font-mono, monospace);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+}
+
+.hmi-state-code strong {
+    margin-left: 4px;
+    color: var(--mud-palette-text-primary);
+    font-size: 12px;
+}
+
+.hmi-state-map {
+    align-self: stretch;
+    padding-left: 20px;
+    border-left: 1px solid var(--mud-palette-divider);
+}
+
+.hmi-map-heading {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    margin: 2px 0 12px;
+    color: var(--mud-palette-text-secondary);
+    font-size: 11px;
+}
+
+.hmi-state-map {
+    min-width: 0;
+    padding-right: 64px;
+}
+
+.hmi-state-options {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 7px;
+}
+
+.hmi-unmapped-state {
+    margin-top: 10px;
+    line-height: 1.5;
+}
+
+.hmi-unmapped-state strong {
+    font-family: var(--font-mono, monospace);
+    font-variant-numeric: tabular-nums;
+}
+
+.hmi-state-option {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 5px;
+    min-height: 56px;
+    padding: 9px 10px;
+    border: 1px solid var(--mud-palette-divider);
+    border-radius: 7px;
+    color: var(--mud-palette-text-secondary);
+    font-size: 11px;
+    transition: border-color .15s ease, background-color .15s ease;
+}
+
+.hmi-state-option.is-active {
+    border-color: color-mix(in srgb, var(--state-accent) 72%, var(--mud-palette-divider));
+    background: color-mix(in srgb, var(--state-accent) 12%, var(--mud-palette-surface));
+    color: var(--mud-palette-text-primary);
+}
+
+.hmi-option-code,
+.hmi-address {
+    color: var(--state-accent, var(--mud-palette-primary));
+    font-family: var(--font-mono, monospace);
+    font-size: 10px;
+    letter-spacing: .04em;
+}
+
+.hmi-section {
+    min-width: 0;
+    padding: clamp(15px, 1.8vw, 22px);
+    border: 1px solid var(--mud-palette-divider);
+    border-radius: 11px;
+    background: linear-gradient(145deg,
+        color-mix(in srgb, var(--mud-palette-surface) 96%, var(--mud-palette-primary) 4%),
+        var(--mud-palette-surface) 62%);
+}
+
+.hmi-section-heading {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 14px;
+    padding-bottom: 13px;
+    margin-bottom: 14px;
+    border-bottom: 1px solid var(--mud-palette-divider);
+}
+
+.hmi-section-index {
+    display: block;
+    margin-bottom: 5px;
+    color: var(--mud-palette-primary);
+    font-family: var(--font-mono, monospace);
+    font-size: 9px;
+    letter-spacing: .14em;
+}
+
+.hmi-section-heading h2 {
+    margin: 0;
+    color: var(--mud-palette-text-primary);
+    font-size: 17px;
+    font-weight: 600;
+}
+
+.hmi-section-heading p {
+    margin: 4px 0 0;
+    color: var(--mud-palette-text-secondary);
+    font-size: 11px;
+}
+
+.hmi-legend-separator {
+    padding: 0 5px;
+    color: var(--mud-palette-primary);
+}
+
+.hmi-section-count {
+    color: var(--mud-palette-text-secondary);
+    font-family: var(--font-mono, monospace);
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.hmi-result-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 9px;
+}
+
+.hmi-result-card {
+    --result-accent: var(--mud-palette-text-secondary);
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 132px;
+    padding: 13px 14px 11px;
+    border: 1px solid var(--mud-palette-divider);
+    border-top: 2px solid color-mix(in srgb, var(--result-accent) 60%, transparent);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--mud-palette-surface) 93%, var(--result-accent) 7%);
+    transition: border-color .15s ease, transform .15s ease;
+}
+
+.hmi-result-card:hover,
+.hmi-measure-card:hover {
+    border-color: color-mix(in srgb, var(--result-accent, var(--mud-palette-primary)) 45%, var(--mud-palette-divider));
+    transform: translateY(-1px);
+}
+
+.is-result-ok { --result-accent: var(--mud-palette-success); }
+.is-result-ng,
+.is-result-fault { --result-accent: var(--mud-palette-error); }
+.is-result-pending { --result-accent: var(--mud-palette-warning); }
+
+.hmi-card-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.hmi-card-meta .hmi-address {
+    color: var(--mud-palette-primary);
+}
+
+.hmi-quality {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--mud-palette-text-secondary);
+    font-size: 10px;
+    white-space: nowrap;
+}
+
+.hmi-quality-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+.is-good { color: var(--mud-palette-success); }
+.is-bad { color: var(--mud-palette-error); }
+.is-stale { color: var(--mud-palette-warning); }
+.is-waiting { color: var(--mud-palette-text-secondary); }
+
+.hmi-result-card h3 {
+    flex: 1;
+    margin: 12px 0 8px;
+    color: var(--mud-palette-text-primary);
+    font-size: 12px;
+    font-weight: 550;
+    line-height: 1.45;
+}
+
+.hmi-result-reading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.hmi-result-label {
+    color: var(--result-accent);
+    font-size: 20px;
+    font-weight: 650;
+    letter-spacing: -.02em;
+}
+
+.hmi-result-code {
+    color: var(--mud-palette-text-secondary);
+    font-family: var(--font-mono, monospace);
+    font-size: 11px;
+}
+
+.hmi-card-time {
+    margin-top: 7px;
+    font-size: 10px;
+}
+
+.hmi-measurement-groups {
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1.15fr) minmax(0, .9fr);
+    gap: 10px;
+}
+
+.hmi-measurement-group {
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid var(--mud-palette-divider);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--mud-palette-surface) 96%, var(--mud-palette-primary) 4%);
+}
+
+.hmi-group-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding-bottom: 9px;
+    margin-bottom: 5px;
+    border-bottom: 1px solid var(--mud-palette-divider);
+}
+
+.hmi-group-heading h3 {
+    margin: 0;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.hmi-group-heading span {
+    color: var(--mud-palette-text-secondary);
+    font-family: var(--font-mono, monospace);
+    font-size: 9px;
+}
+
+.hmi-measurement-list {
+    display: flex;
+    flex-direction: column;
+}
+
+.hmi-measure-card {
+    --result-accent: var(--mud-palette-primary);
+    min-width: 0;
+    padding: 11px 2px;
+    border-bottom: 1px solid color-mix(in srgb, var(--mud-palette-divider) 72%, transparent);
+    transition: border-color .15s ease, transform .15s ease;
+}
+
+.hmi-measure-card:last-child {
+    border-bottom: 0;
+}
+
+.hmi-measure-name {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.hmi-measure-name h4 {
+    margin: 0 0 3px;
+    color: var(--mud-palette-text-primary);
+    font-size: 11px;
+    font-weight: 550;
+}
+
+.hmi-measure-name .hmi-address {
+    font-size: 10px;
+}
+
+.hmi-measure-reading {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    margin-top: 7px;
+}
+
+.hmi-measure-reading strong {
+    color: var(--mud-palette-text-primary);
+    font-family: var(--font-mono, monospace);
+    font-size: clamp(20px, 1.8vw, 24px);
+    font-weight: 550;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -.04em;
+}
+
+.hmi-measure-reading span {
+    color: var(--mud-palette-text-secondary);
+    font-size: 10px;
+}
+
+.hmi-measure-card .hmi-card-time {
+    margin-top: 3px;
+    font-size: 10px;
+}
+
+@media (max-width: 1200px) {
+    .hmi-result-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .hmi-measurement-groups {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .hmi-measurement-group:last-child {
+        grid-column: 1 / -1;
+    }
+
+    .hmi-measurement-group:last-child .hmi-measurement-list {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        column-gap: 18px;
+    }
+}
+
+@media (max-width: 900px) {
+    .hmi-overview-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .hmi-state-panel {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 18px;
+    }
+
+    .hmi-state-map {
+        padding: 16px 0 0;
+        border-top: 1px solid var(--mud-palette-divider);
+        border-left: 0;
+    }
+}
+
+@media (max-width: 700px) {
+    .hmi-toolbar {
+        align-items: flex-start;
+    }
+
+    .hmi-result-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .hmi-measurement-groups {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .hmi-measurement-group:last-child {
+        grid-column: auto;
+    }
+
+    .hmi-measurement-group:last-child .hmi-measurement-list {
+        display: flex;
+    }
+}
+
+@media (max-width: 460px) {
+    .hmi-toolbar {
+        flex-direction: column;
+    }
+
+    .hmi-section-heading {
+        align-items: flex-start;
+    }
+
+    .hmi-state-options {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .hmi-result-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .hmi-state-option,
+    .hmi-result-card,
+    .hmi-measure-card {
+        transition: none;
+    }
+}
+
+/* ===== 紧凑布局模式（密度下调；数值字号保持醒目；仅宽屏生效，移动端保持原适配） ===== */
+@media (min-width: 901px) {
+    .hmi-toolbar {
+        gap: 8px;
+        margin: 0 0 10px;
+    }
+
+    .hmi-dashboard,
+    .hmi-overview-grid {
+        gap: 10px;
+    }
+
+    .hmi-section {
+        padding: 12px 14px;
+    }
+
+    .hmi-section-heading {
+        gap: 10px;
+        padding-bottom: 8px;
+        margin-bottom: 8px;
+    }
+
+    .hmi-state-panel,
+    .hmi-total-panel {
+        min-height: 150px;
+        padding: 14px 18px;
+    }
+
+    .hmi-state-primary {
+        gap: 6px;
+        padding: 8px 0 6px;
+    }
+
+    .hmi-state-value {
+        font-size: clamp(22px, 2.2vw, 30px);
+    }
+
+    .hmi-total-value {
+        font-size: clamp(22px, 2.4vw, 32px);
+    }
+
+    .hmi-result-grid {
+        gap: 7px;
+    }
+
+    .hmi-result-card {
+        min-height: 102px;
+        padding: 10px 12px 8px;
+    }
+
+    .hmi-measurement-groups {
+        gap: 8px;
+    }
+
+    .hmi-measurement-group {
+        padding: 10px;
+    }
+
+    .hmi-group-heading {
+        padding-bottom: 6px;
+        margin-bottom: 3px;
+    }
+
+    .hmi-measure-card {
+        padding: 8px 2px;
+    }
+
+    .hmi-measure-reading {
+        margin-top: 4px;
+    }
+
+    .hmi-measure-reading strong {
+        font-size: clamp(18px, 1.6vw, 21px);
+    }
+}

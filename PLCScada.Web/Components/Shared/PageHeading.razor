@@ -1,0 +1,7 @@
+<div class="page-heading"><div><div class="eyebrow">PLCScada / @Section</div><MudText Typo="Typo.h4" HtmlTag="h1">@Title</MudText><MudText Typo="Typo.body2" Class="page-description">@Description</MudText></div><div class="heading-actions">@ChildContent</div></div>
+@code {
+    [Parameter] public string Section { get; set; } = "WORKSPACE";
+    [Parameter] public string Title { get; set; } = "";
+    [Parameter] public string Description { get; set; } = "";
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

@@ -1,0 +1,85 @@
+@using System.Text.Json
+@using PLCScada.Application
+@inject IScadaStore Store
+
+<MudDialog>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-2">
+            SN：<span class="mono">@Sn</span> · 时间 @CapturedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
+        </MudText>
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate Color="Color.Primary" />
+        }
+        else if (_snapshots.Count == 0)
+        {
+            <MudAlert Severity="Severity.Info" Dense>该 SN 还没有触发快照记录。</MudAlert>
+        }
+        else
+        {
+            @foreach (var snapshot in _snapshots)
+            {
+                <MudText Typo="Typo.subtitle2" Class="mt-3">
+                    @snapshot.RuleName · @snapshot.OccurredAt.ToLocalTime().ToString("MM-dd HH:mm:ss")
+                </MudText>
+                <MudSimpleTable Dense Elevation="0">
+                    <thead><tr><th>点位</th><th>值</th><th>质量</th></tr></thead>
+                    <tbody>
+                        @foreach (var item in Parse(snapshot.ValuesJson))
+                        {
+                            <tr>
+                                <td>@item.Name</td>
+                                <td class="mono">@item.Value</td>
+                                <td>@item.Quality</td>
+                            </tr>
+                        }
+                    </tbody>
+                </MudSimpleTable>
+            }
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Close">关闭</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] public IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public Guid SnRecordId { get; set; }
+    [Parameter] public string Sn { get; set; } = "";
+    [Parameter] public DateTimeOffset? CapturedAt { get; set; }
+
+    private IReadOnlyList<SnapshotRecord> _snapshots = [];
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _snapshots = await Store.GetSnapshotsBySnRecordAsync(SnRecordId);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static IReadOnlyList<SnapshotValueItem> Parse(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return [];
+        try
+        {
+            var items = JsonSerializer.Deserialize<List<SnapshotValueItem>>(json) ?? [];
+            return items
+                .OrderBy(x => x.Name.Contains("判定") ? 0 : 1)
+                .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
+
+    private void Close() => Dialog.Close();
+}

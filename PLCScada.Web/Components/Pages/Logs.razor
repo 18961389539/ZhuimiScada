@@ -1,0 +1,296 @@
+@page "/logs"
+@inherits LivePage
+@using System.Text
+@inject PageUiState PageState
+@inject ISnackbar Toast
+@inject IDialogService Dialogs
+@inject DataRetentionOptions Retention
+<PageTitle>运行日志 · PLCScada</PageTitle>
+<PageHeading Section="LOGS" title="运行日志" Description="配置变更、连接状态、配方下发与通信测试审计。支持级别/来源/时间筛选、CSV 导出，超龄数据由保留策略自动清理。" />
+@if (LoadError is not null) { <MudAlert Severity="Severity.Error">@LoadError</MudAlert> }
+<MudPaper Outlined Elevation="0" Class="table-panel">
+    <MudTable Items="_logs" Hover Elevation="0" Dense>
+        <ToolBarContent>
+            <MudText Typo="Typo.body2">共 @_totalCount 条@(HasFilter ? "（已筛选）" : "")</MudText>
+            <MudSpacer />
+            <MudTextField @bind-Value="PageState.LogsSearch" Immediate DebounceInterval="400"
+                          OnDebounceIntervalElapsed="OnSearchChanged"
+                          Placeholder="搜索来源或内容"
+                          Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                          Variant="Variant.Outlined" Margin="Margin.Dense" Class="search-field" />
+            <MudSelect T="string" MultiSelection="true" SelectedValues="_levelValues"
+                       SelectedValuesChanged="OnLevelsChanged" SelectAll="false"
+                       Label="级别" Variant="Variant.Outlined" Margin="Margin.Dense" Dense
+                       Class="log-filter-select">
+                <MudSelectItem T="string" Value="@("Information")">信息</MudSelectItem>
+                <MudSelectItem T="string" Value="@("Warning")">警告</MudSelectItem>
+                <MudSelectItem T="string" Value="@("Error")">错误</MudSelectItem>
+            </MudSelect>
+            <MudSelect T="string" Value="_source" ValueChanged="OnSourceChanged"
+                       Label="来源" Variant="Variant.Outlined" Margin="Margin.Dense" Dense
+                       Class="log-filter-select">
+                <MudSelectItem T="string" Value="@("")">全部来源</MudSelectItem>
+                @foreach (var source in _sources)
+                {
+                    <MudSelectItem T="string" Value="@source">@source</MudSelectItem>
+                }
+            </MudSelect>
+            <MudSelect T="int" Value="_rangeHours" ValueChanged="OnRangeChanged"
+                       Label="时间范围" Variant="Variant.Outlined" Margin="Margin.Dense" Dense
+                       Class="log-filter-select">
+                <MudSelectItem T="int" Value="0">全部时间</MudSelectItem>
+                <MudSelectItem T="int" Value="1">最近 1 小时</MudSelectItem>
+                <MudSelectItem T="int" Value="24">最近 24 小时</MudSelectItem>
+                <MudSelectItem T="int" Value="168">最近 7 天</MudSelectItem>
+                <MudSelectItem T="int" Value="720">最近 30 天</MudSelectItem>
+            </MudSelect>
+            <MudTooltip Text="立即刷新">
+                <MudIconButton Icon="@Icons.Material.Outlined.Refresh" Size="Size.Small" OnClick="ReloadAsync" />
+            </MudTooltip>
+            <MudTooltip Text="@(_autoRefresh ? "自动刷新已开启：每 5 秒刷新一次" : "自动刷新已关闭：点击开启每 5 秒刷新")">
+                <MudIconButton Icon="@Icons.Material.Outlined.Autorenew"
+                               Color="@(_autoRefresh ? Color.Primary : Color.Default)"
+                               Variant="@(_autoRefresh ? Variant.Filled : Variant.Text)"
+                               Size="Size.Small" OnClick="ToggleAutoRefreshAsync" />
+            </MudTooltip>
+            @if (_exportHref.Length > 0)
+            {
+                <a class="log-export-button" href="@_exportHref" download="@_exportFileName"
+                   title="@($"导出当前筛选结果（{_exportCount} 条，CSV）")">
+                    <MudIcon Icon="@Icons.Material.Outlined.FileDownload" Size="Size.Small" />导出 CSV
+                </a>
+            }
+            else
+            {
+                <span class="log-export-button is-disabled" title="没有可导出的日志">
+                    <MudIcon Icon="@Icons.Material.Outlined.FileDownload" Size="Size.Small" />导出 CSV
+                </span>
+            }
+            <MudTooltip Text="@RetentionHint">
+                <MudButton Variant="Variant.Outlined" Color="Color.Warning" Size="Size.Small"
+                           StartIcon="@Icons.Material.Outlined.CleaningServices" OnClick="CleanupAsync">
+                    按保留策略清理
+                </MudButton>
+            </MudTooltip>
+        </ToolBarContent>
+        <HeaderContent>
+            <MudTh Style="width: 150px">时间</MudTh>
+            <MudTh Style="width: 84px">级别</MudTh>
+            <MudTh Style="width: 110px">来源</MudTh>
+            <MudTh>内容</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="时间" Class="mono">@context.Timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</MudTd>
+            <MudTd DataLabel="级别">
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                         Color="@GetLevelColor(context.Level)">@GetLevelLabel(context.Level)</MudChip>
+            </MudTd>
+            <MudTd DataLabel="来源">@context.Source</MudTd>
+            <MudTd DataLabel="内容"><div class="log-message" title="@context.Message">@context.Message</div></MudTd>
+        </RowTemplate>
+        <NoRecordsContent><MudText Class="pa-8">暂无符合条件的日志。</MudText></NoRecordsContent>
+        <PagerContent>
+            <div class="log-pager">
+                <MudText Typo="Typo.caption" Class="muted">共 @_totalCount 条 · 第 @_page / @_pageCount 页</MudText>
+                <div class="d-flex align-center flex-wrap gap-2">
+                    <MudSelect T="int" Value="_pageSize" ValueChanged="OnPageSizeChanged" Dense
+                               Variant="Variant.Outlined" Margin="Margin.Dense" Class="log-page-size">
+                        <MudSelectItem T="int" Value="50">每页 50 条</MudSelectItem>
+                        <MudSelectItem T="int" Value="100">每页 100 条</MudSelectItem>
+                        <MudSelectItem T="int" Value="200">每页 200 条</MudSelectItem>
+                    </MudSelect>
+                    <MudPagination Count="_pageCount" Selected="_page" SelectedChanged="OnPageChangedAsync"
+                                   BoundaryCount="1" MiddleCount="2" Size="Size.Small" />
+                    <MudNumericField T="int" Value="_jumpPage" ValueChanged="OnJumpPageChanged"
+                                     Min="1" Max="@Math.Max(_pageCount, 1)"
+                                     Variant="Variant.Outlined" Margin="Margin.Dense"
+                                     Placeholder="页码" Class="log-jump-field" />
+                    <MudButton Size="Size.Small" Variant="Variant.Outlined"
+                               Disabled="@(_jumpPage < 1 || _jumpPage > _pageCount || _jumpPage == _page)"
+                               OnClick="JumpToPageAsync">
+                        跳转
+                    </MudButton>
+                </div>
+            </div>
+        </PagerContent>
+    </MudTable>
+</MudPaper>
+@code {
+    private IReadOnlyList<OperationLog> _logs = [];
+    private IReadOnlyList<string> _sources = [];
+    private IEnumerable<string> _levelValues = [];
+    private string _source = "";
+    private int _rangeHours;
+    private int _page = 1;
+    private int _pageCount = 1;
+    private int _pageSize = 50;
+    private int _jumpPage = 1;
+    private int _totalCount;
+    private bool _autoRefresh;
+    private bool _loaded;
+    private DateTimeOffset _lastAutoRefresh = DateTimeOffset.MinValue;
+    private string _exportHref = "";
+    private string _exportFileName = "PLCScada-Logs.csv";
+    private int _exportCount;
+    private DataRetentionOptions? _retention;
+
+    private DataRetentionOptions EffectiveRetention => _retention ?? Retention;
+
+    private bool HasFilter => !string.IsNullOrWhiteSpace(PageState.LogsSearch) ||
+                              _levelValues.Any() || !string.IsNullOrWhiteSpace(_source) || _rangeHours > 0;
+
+    private string RetentionHint =>
+        $"按当前保留策略立即清理：操作日志保留 {(EffectiveRetention.OperationLogRetentionDays > 0 ? $"{EffectiveRetention.OperationLogRetentionDays} 天" : "永久")}，" +
+        $"已解除报警 {(EffectiveRetention.ClearedAlarmRetentionDays > 0 ? $"{EffectiveRetention.ClearedAlarmRetentionDays} 天" : "永久")}，" +
+        $"配方下发记录 {(EffectiveRetention.RecipeApplyRecordRetentionDays > 0 ? $"{EffectiveRetention.RecipeApplyRecordRetentionDays} 天" : "永久")}。";
+
+    protected override async Task RefreshAsync()
+    {
+        if (!_loaded)
+        {
+            await LoadAsync();
+            return;
+        }
+        if (!_autoRefresh)
+            return;
+        if (DateTimeOffset.UtcNow - _lastAutoRefresh < TimeSpan.FromSeconds(5))
+            return;
+        _lastAutoRefresh = DateTimeOffset.UtcNow;
+        await LoadAsync();
+    }
+
+    private LogQuery BuildQuery(int page) => new(
+        PageState.LogsSearch,
+        _levelValues.ToArray(),
+        _source,
+        _rangeHours > 0 ? DateTimeOffset.UtcNow.AddHours(-_rangeHours) : null,
+        null,
+        page,
+        _pageSize);
+
+    private async Task LoadAsync()
+    {
+        _retention = await Store.GetRetentionOptionsAsync(Retention);
+        _sources = await Store.GetLogSourcesAsync();
+        var result = await Store.QueryLogsAsync(BuildQuery(_page));
+        _pageCount = Math.Max(1, (int)Math.Ceiling(result.TotalCount / (double)_pageSize));
+        if (_page > _pageCount)
+        {
+            _page = _pageCount;
+            _jumpPage = _page;
+            result = await Store.QueryLogsAsync(BuildQuery(_page));
+        }
+        _totalCount = result.TotalCount;
+        _logs = result.Items;
+
+        var exportItems = await Store.QueryLogsForExportAsync(BuildQuery(1));
+        _exportCount = exportItems.Count;
+        _exportHref = exportItems.Count == 0
+            ? ""
+            : $"data:text/csv;charset=utf-8;base64,{Convert.ToBase64String(
+                Encoding.UTF8.GetBytes("\uFEFF" + LogCsv.Export(exportItems)))}";
+        _exportFileName = $"PLCScada-Logs-{DateTime.Now:yyyyMMdd-HHmmss}.csv";
+        _loaded = true;
+    }
+
+    private async Task ReloadAsync()
+    {
+        _page = 1;
+        await LoadAsync();
+    }
+
+    private async Task OnSearchChanged(string _) => await ReloadAsync();
+
+    private async Task OnLevelsChanged(IEnumerable<string> values)
+    {
+        _levelValues = values ?? [];
+        await ReloadAsync();
+    }
+
+    private async Task OnSourceChanged(string value)
+    {
+        _source = value ?? "";
+        await ReloadAsync();
+    }
+
+    private async Task OnRangeChanged(int hours)
+    {
+        _rangeHours = hours;
+        await ReloadAsync();
+    }
+
+    private async Task OnPageChangedAsync(int page)
+    {
+        if (page == _page) return;
+        _page = page;
+        _jumpPage = page;
+        await LoadAsync();
+    }
+
+    private async Task OnPageSizeChanged(int size)
+    {
+        _pageSize = size switch { 100 => 100, 200 => 200, _ => 50 };
+        _page = 1;
+        _jumpPage = 1;
+        await LoadAsync();
+    }
+
+    private void OnJumpPageChanged(int page) => _jumpPage = page;
+
+    private async Task JumpToPageAsync()
+    {
+        var target = Math.Clamp(_jumpPage, 1, Math.Max(_pageCount, 1));
+        if (target == _page) return;
+        _page = target;
+        _jumpPage = target;
+        await LoadAsync();
+    }
+
+    private async Task ToggleAutoRefreshAsync()
+    {
+        _autoRefresh = !_autoRefresh;
+        if (_autoRefresh)
+        {
+            _lastAutoRefresh = DateTimeOffset.UtcNow;
+            await LoadAsync();
+        }
+    }
+
+    private async Task CleanupAsync()
+    {
+        if (await Dialogs.ShowMessageBox(
+                "按保留策略清理",
+                $"将按当前保留策略删除超龄数据：{RetentionHint}此操作不可撤销（清理动作本身会写入审计日志），确定继续吗？",
+                yesText: "清理", cancelText: "取消") != true)
+            return;
+        try
+        {
+            var result = await Store.CleanupHistoryAsync(EffectiveRetention);
+            var deleted = result.OperationLogsDeleted + result.ClearedAlarmsDeleted + result.RecipeApplyRecordsDeleted;
+            Toast.Add(deleted == 0
+                ? "没有超龄数据需要清理"
+                : $"已清理：日志 {result.OperationLogsDeleted} 条、已解除报警 {result.ClearedAlarmsDeleted} 条、配方下发记录 {result.RecipeApplyRecordsDeleted} 条",
+                Severity.Success);
+            _page = 1;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"清理失败：{ex.Message}", Severity.Error);
+        }
+    }
+
+    private static Color GetLevelColor(string level) => level switch
+    {
+        "Error" => Color.Error,
+        "Warning" => Color.Warning,
+        _ => Color.Default
+    };
+
+    private static string GetLevelLabel(string level) => level switch
+    {
+        "Error" => "错误",
+        "Warning" => "警告",
+        _ => "信息"
+    };
+}

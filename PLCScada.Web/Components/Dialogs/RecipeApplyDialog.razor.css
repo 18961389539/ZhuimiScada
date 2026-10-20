@@ -1,0 +1,29 @@
+.recipe-apply-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin-bottom: 10px;
+}
+
+.recipe-apply-endpoint {
+    margin: -4px 0 10px;
+    overflow-wrap: anywhere;
+}
+
+.recipe-apply-table {
+    max-height: min(48vh, 440px);
+    overflow: auto;
+}
+
+.recipe-apply-error {
+    display: block;
+    max-width: 360px;
+    color: var(--mud-palette-error);
+    white-space: normal;
+}
+
+@media (max-width: 600px) {
+    .recipe-apply-table {
+        max-height: 55vh;
+    }
+}

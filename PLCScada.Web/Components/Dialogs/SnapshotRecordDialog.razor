@@ -1,0 +1,65 @@
+@using System.Text.Json
+@using PLCScada.Application
+
+<MudDialog>
+    <DialogContent>
+        @if (Record is null)
+        {
+            <MudText>记录不存在。</MudText>
+        }
+        else
+        {
+            <MudText Typo="Typo.body2" Class="mb-2">
+                规则：<strong>@Record.RuleName</strong> · 时间 @Record.OccurredAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
+            </MudText>
+            <MudText Typo="Typo.body2" Class="mb-3">
+                SN：<span class="mono">@(string.IsNullOrWhiteSpace(Record.Sn) ? "—" : Record.Sn)</span>
+            </MudText>
+            <MudSimpleTable Dense Elevation="0">
+                <thead>
+                    <tr><th>点位</th><th>值</th><th>质量</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var item in Values)
+                    {
+                        <tr>
+                            <td>@item.Name</td>
+                            <td class="mono">@item.Value</td>
+                            <td>@item.Quality</td>
+                        </tr>
+                    }
+                </tbody>
+            </MudSimpleTable>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Close">关闭</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] public IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public SnapshotRecord? Record { get; set; }
+
+    private IReadOnlyList<SnapshotValueItem> Values
+    {
+        get
+        {
+            if (Record is null || string.IsNullOrWhiteSpace(Record.ValuesJson)) return [];
+            try
+            {
+                var items = JsonSerializer.Deserialize<List<SnapshotValueItem>>(Record.ValuesJson) ?? [];
+                return items
+                    .OrderBy(x => x.Name.Contains("判定") ? 0 : 1)
+                    .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+            }
+            catch (JsonException)
+            {
+                return [];
+            }
+        }
+    }
+
+    private void Close() => Dialog.Close();
+}

@@ -1,0 +1,108 @@
+@page "/"
+@inherits LivePage
+@inject NavigationManager Navigation
+<PageTitle>系统总览 · PLCScada</PageTitle>
+<PageHeading Section="OVERVIEW" title="系统总览" Description="未处理报警概览；设备与变量详情见各业务页面。" />
+<MudGrid>
+    <MudItem xs="12" md="8">
+        <MudPaper Outlined Elevation="0" Class="pa-5">
+            <div class="d-flex align-center flex-wrap gap-2 mb-3">
+                <MudText Typo="Typo.h6">未处理报警</MudText>
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@(_badge.P1UnacknowledgedCount > 0 ? Color.Error : Color.Default)">
+                    P1 未确认：@_badge.P1UnacknowledgedCount
+                </MudChip>
+                <MudSpacer />
+                <MudButton Variant="Variant.Text" EndIcon="@Icons.Material.Outlined.ArrowForward"
+                           OnClick="GoToAlarms">进入报警管理</MudButton>
+            </div>
+            @if (_alarms.Count == 0)
+            {
+                <MudAlert Severity="Severity.Success" Dense>当前没有未确认或未解除的报警。</MudAlert>
+            }
+            else
+            {
+                <MudSimpleTable Dense Elevation="0">
+                    <tbody>
+                        @foreach (var alarm in _alarms)
+                        {
+                            <tr>
+                                <td style="width: 64px">
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Filled"
+                                             Color="@GetPriorityColor(alarm.Priority)">@alarm.Priority</MudChip>
+                                </td>
+                                <td>
+                                    @alarm.Message
+                                    <small class="muted"> · @alarm.OccurredAt.ToLocalTime().ToString("MM-dd HH:mm:ss")</small>
+                                </td>
+                                <td style="width: 96px" class="mono">@FormatDuration(alarm)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </MudSimpleTable>
+            }
+        </MudPaper>
+    </MudItem>
+    <MudItem xs="12" md="4">
+        <MudPaper Outlined Elevation="0" Class="pa-5">
+            <MudText Typo="Typo.h6" Class="mb-3">报警统计</MudText>
+            <div class="home-alarm-stats">
+                <div class="home-alarm-stat">
+                    <span>未确认</span>
+                    <strong>@_badge.UnacknowledgedCount</strong>
+                </div>
+                <div class="home-alarm-stat">
+                    <span>已恢复未确认</span>
+                    <strong>@_badge.ClearedUnacknowledgedCount</strong>
+                </div>
+                <div class="home-alarm-stat">
+                    <span>搁置中</span>
+                    <strong>@_shelvedCount</strong>
+                </div>
+            </div>
+        </MudPaper>
+    </MudItem>
+</MudGrid>
+
+@code {
+    private IReadOnlyList<AlarmRecord> _alarms = [];
+    private AlarmBadgeSummary _badge = new(0, 0, 0);
+    private int _shelvedCount;
+    private DateTimeOffset _lastLoad = DateTimeOffset.MinValue;
+
+    protected override async Task RefreshAsync()
+    {
+        if (DateTimeOffset.UtcNow - _lastLoad < TimeSpan.FromSeconds(3))
+            return;
+        _lastLoad = DateTimeOffset.UtcNow;
+        try
+        {
+            var result = await Store.QueryAlarmsAsync(new AlarmQuery(ActiveOnly: true, PageSize: 10));
+            _alarms = result.Items;
+            _badge = await Store.GetAlarmBadgeSummaryAsync();
+            _shelvedCount = (await Store.QueryAlarmsAsync(new AlarmQuery(ShelvedOnly: true, PageSize: 10))).TotalCount;
+        }
+        catch
+        {
+            // 概览查询失败不阻断页面
+        }
+    }
+
+    private void GoToAlarms() => Navigation.NavigateTo("/alarms");
+
+    private static Color GetPriorityColor(AlarmPriority priority) => priority switch
+    {
+        AlarmPriority.P1 => Color.Error,
+        AlarmPriority.P2 => Color.Warning,
+        AlarmPriority.P3 => Color.Info,
+        _ => Color.Default
+    };
+
+    private static string FormatDuration(AlarmRecord alarm)
+    {
+        var span = DateTimeOffset.UtcNow - alarm.OccurredAt;
+        return span.TotalMinutes < 1 ? $"{span.TotalSeconds:0} 秒"
+            : span.TotalHours < 1 ? $"{span.TotalMinutes:0} 分"
+            : span.TotalDays < 1 ? $"{span.TotalHours:0.#} 小时"
+            : $"{span.TotalDays:0.#} 天";
+    }
+}

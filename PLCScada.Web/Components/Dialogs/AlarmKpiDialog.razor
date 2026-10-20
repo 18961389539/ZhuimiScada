@@ -1,0 +1,196 @@
+@inject IScadaStore Store
+@inject ISnackbar Toast
+
+<MudDialog>
+    <DialogContent>
+        <div class="d-flex align-center flex-wrap gap-2 mb-3">
+            <MudSelect T="int" Value="_rangeHours" ValueChanged="OnRangeChanged" Label="统计区间"
+                       Variant="Variant.Outlined" Margin="Margin.Dense" Dense Class="kpi-range">
+                <MudSelectItem T="int" Value="24">最近 24 小时</MudSelectItem>
+                <MudSelectItem T="int" Value="168">最近 7 天</MudSelectItem>
+                <MudSelectItem T="int" Value="720">最近 30 天</MudSelectItem>
+            </MudSelect>
+            <MudButton Variant="Variant.Outlined" Size="Size.Small"
+                       StartIcon="@Icons.Material.Outlined.Refresh" OnClick="ReloadAsync">
+                刷新
+            </MudButton>
+            @if (_exportHref.Length > 0)
+            {
+                <a class="kpi-export" href="@_exportHref" download="@_exportFileName">
+                    导出 KPI CSV
+                </a>
+            }
+        </div>
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate Color="Color.Primary" />
+        }
+        else if (_stats is { } stats)
+        {
+            <MudGrid>
+                @foreach (var (label, value) in BuildCards(stats))
+                {
+                    <MudItem xs="6" md="3">
+                        <div class="kpi-card">
+                            <span>@label</span>
+                            <strong>@value</strong>
+                        </div>
+                    </MudItem>
+                }
+            </MudGrid>
+
+            <MudText Typo="Typo.subtitle2" Class="mt-4 mb-2">Top 10 报警来源（区间内）</MudText>
+            <MudTable Items="stats.TopSources" Dense Hover Elevation="0" Breakpoint="Breakpoint.Sm">
+                <HeaderContent><MudTh>来源</MudTh><MudTh>次数</MudTh></HeaderContent>
+                <RowTemplate>
+                    <MudTd>@FormatSource(context.Source)</MudTd>
+                    <MudTd Class="mono">@context.Count</MudTd>
+                </RowTemplate>
+                <NoRecordsContent><MudText Class="pa-3">区间内没有报警。</MudText></NoRecordsContent>
+            </MudTable>
+
+            <MudText Typo="Typo.subtitle2" Class="mt-4 mb-2">
+                常驻报警（超过 24 小时未解除，共 @stats.StandingAlarmCount 条）
+            </MudText>
+            <MudTable Items="stats.StandingAlarms" Dense Hover Elevation="0" Breakpoint="Breakpoint.Sm">
+                <HeaderContent>
+                    <MudTh>发生时间</MudTh>
+                    <MudTh>优先级</MudTh>
+                    <MudTh>消息</MudTh>
+                    <MudTh>状态</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd Class="mono">@context.OccurredAt.ToLocalTime().ToString("MM-dd HH:mm")</MudTd>
+                    <MudTd>@context.Priority</MudTd>
+                    <MudTd>@context.Message</MudTd>
+                    <MudTd>@GetStatusLabel(context.Status)</MudTd>
+                </RowTemplate>
+                <NoRecordsContent><MudText Class="pa-3">没有常驻报警。</MudText></NoRecordsContent>
+            </MudTable>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Close">关闭</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] public IMudDialogInstance Dialog { get; set; } = default!;
+
+    private int _rangeHours = 24;
+    private bool _loading = true;
+    private AlarmStatistics? _stats;
+    private string _exportHref = "";
+    private string _exportFileName = "Alarm-KPI.csv";
+    private Dictionary<Guid, string> _deviceNames = [];
+    private Dictionary<Guid, string> _tagNames = [];
+    private Dictionary<Guid, string> _definitionNames = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        _deviceNames = (await Store.GetDevicesAsync()).ToDictionary(x => x.Id, x => x.Name);
+        _tagNames = (await Store.GetTagsAsync()).ToDictionary(x => x.Id, x => x.Name);
+        _definitionNames = (await Store.GetAlarmDefinitionsAsync()).ToDictionary(x => x.Id, x => x.Name);
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _loading = true;
+        try
+        {
+            _stats = await Store.GetAlarmStatisticsAsync(DateTimeOffset.UtcNow.AddHours(-_rangeHours));
+            _exportHref = BuildExport(stats: _stats);
+            _exportFileName = $"Alarm-KPI-{_rangeHours}h-{DateTime.Now:yyyyMMdd-HHmmss}.csv";
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"统计失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task OnRangeChanged(int hours)
+    {
+        _rangeHours = hours;
+        await ReloadAsync();
+    }
+
+    private string BuildExport(AlarmStatistics stats)
+    {
+        var builder = new System.Text.StringBuilder();
+        builder.AppendLine("指标,数值");
+        foreach (var (label, value) in BuildCards(stats))
+            builder.Append(label).Append(',').Append(value).AppendLine();
+        builder.AppendLine();
+        builder.AppendLine("Top 来源,次数");
+        foreach (var item in stats.TopSources)
+            builder.Append(FormatSource(item.Source).Replace(",", "，")).Append(',').Append(item.Count).AppendLine();
+        return $"data:text/csv;charset=utf-8;base64,{Convert.ToBase64String(
+            System.Text.Encoding.UTF8.GetBytes("\uFEFF" + builder))}";
+    }
+
+    private static IEnumerable<(string Label, string Value)> BuildCards(AlarmStatistics stats)
+    {
+        yield return ("区间报警总数", stats.RangeTotalCount.ToString());
+        yield return ("平均确认耗时", stats.AverageAcknowledgeSeconds is { } seconds ? FormatDuration(seconds) : "—");
+        yield return ("确认率", stats.RangeTotalCount == 0
+            ? "—"
+            : $"{stats.RangeAcknowledgedCount * 100.0 / stats.RangeTotalCount:0.#}%");
+        yield return ("活动报警", stats.ActiveCount.ToString());
+        yield return ("未确认", stats.UnacknowledgedCount.ToString());
+        yield return ("搁置中", stats.ShelvedActiveCount.ToString());
+        yield return ("已恢复未确认", stats.ClearedUnacknowledgedCount.ToString());
+        yield return ("常驻报警", stats.StandingAlarmCount.ToString());
+    }
+
+    private static string FormatDuration(double seconds) => seconds switch
+    {
+        < 60 => $"{seconds:0} 秒",
+        < 3600 => $"{seconds / 60:0.#} 分钟",
+        _ => $"{seconds / 3600:0.##} 小时"
+    };
+
+    private string FormatSource(string source)
+    {
+        if (TryParseTail(source, "Device:", out var deviceId))
+            return $"设备「{_deviceNames.GetValueOrDefault(deviceId, "已删除")}」";
+        if (TryParseTail(source, "TagQuality:", out var qualityId))
+            return $"「{_tagNames.GetValueOrDefault(qualityId, "已删除")}」读取质量";
+        if (source.StartsWith("Tag:", StringComparison.Ordinal))
+        {
+            var rest = source[4..];
+            var separator = rest.IndexOf(':');
+            if (separator > 0 && Guid.TryParse(rest[..separator], out var tagId))
+            {
+                var condition = rest[(separator + 1)..];
+                var label = condition switch { "High" => "上限", "Low" => "下限", _ => "限值" };
+                return $"「{_tagNames.GetValueOrDefault(tagId, "已删除")}」{label}";
+            }
+        }
+        if (TryParseTail(source, "AlarmDef:", out var definitionId))
+            return $"定义「{_definitionNames.GetValueOrDefault(definitionId, "已删除")}」";
+        return source;
+    }
+
+    private static bool TryParseTail(string source, string prefix, out Guid id)
+    {
+        id = Guid.Empty;
+        return source.StartsWith(prefix, StringComparison.Ordinal) &&
+               Guid.TryParse(source[prefix.Length..], out id);
+    }
+
+    private static string GetStatusLabel(AlarmStatus status) => status switch
+    {
+        AlarmStatus.Active => "未确认",
+        AlarmStatus.Acknowledged => "已确认",
+        AlarmStatus.ClearedUnacknowledged => "已恢复未确认",
+        AlarmStatus.Cleared => "已解除",
+        _ => "未知"
+    };
+
+    private void Close() => Dialog.Close();
+}

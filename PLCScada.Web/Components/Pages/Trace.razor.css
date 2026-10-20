@@ -1,0 +1,204 @@
+.trace-tabs ::deep .mud-tabs-panels {
+    background: transparent;
+}
+
+.trace-config {
+    margin: 0;
+}
+
+.trace-config-card {
+    height: 100%;
+}
+
+.trace-form-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr);
+    gap: 10px;
+    align-items: start;
+}
+
+@media (max-width: 900px) {
+    .trace-form-row {
+        grid-template-columns: 1fr;
+    }
+}
+
+.trace-page-size {
+    min-width: 128px;
+}
+
+.trace-export {
+    display: inline-flex;
+    align-items: center;
+    min-height: 34px;
+    padding: 0 10px;
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: 8px;
+    font-size: 12px;
+    white-space: nowrap;
+    text-decoration: none;
+    color: var(--mud-palette-text-primary);
+}
+
+.trace-export:hover {
+    border-color: var(--mud-palette-primary);
+}
+
+.trace-pager {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100%;
+    flex-wrap: wrap;
+}
+
+.trace-selected-points {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+    max-height: 120px;
+    overflow-y: auto;
+}
+
+.trace-points-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.trace-point-picker {
+    min-width: 240px;
+    max-width: 300px;
+}
+
+.trace-point-filter {
+    max-width: 190px;
+}
+
+.trace-point-table {
+    margin-top: 8px;
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.trace-point-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.2fr) 92px 80px 56px 150px 40px;
+    gap: 10px;
+    align-items: center;
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--mud-palette-lines-default);
+}
+
+.trace-point-row:last-child {
+    border-bottom: none;
+}
+
+.trace-point-row ::deep .mud-input-control {
+    width: 100%;
+    margin-top: 0;
+}
+
+.trace-point-row ::deep .mud-input.mud-input-outlined {
+    min-height: 34px;
+}
+
+.trace-point-th {
+    font-size: 11px;
+    color: var(--mud-palette-text-secondary);
+    background: rgba(125, 147, 178, .06);
+    padding-top: 4px;
+    padding-bottom: 4px;
+}
+
+.trace-point-name {
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.trace-num {
+    font-size: 12px;
+    text-align: right;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.trace-field {
+    border-radius: 8px;
+}
+
+.trace-hot {
+    outline: 2px solid var(--mud-palette-warning);
+    outline-offset: 2px;
+    border-radius: 8px;
+}
+
+.trace-issues {
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: 8px;
+    padding: 10px 12px;
+}
+
+.trace-issues-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.trace-tag {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 999px;
+}
+
+.trace-tag.err {
+    background: rgba(226, 75, 74, .16);
+    color: var(--mud-palette-error);
+}
+
+.trace-tag.warn {
+    background: rgba(186, 117, 23, .16);
+    color: var(--mud-palette-warning);
+}
+
+.trace-issue {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    padding: 4px 0;
+    color: var(--mud-palette-text-primary);
+}
+
+.trace-issue-mark {
+    flex: none;
+    width: 18px;
+    text-align: center;
+    font-weight: 600;
+}
+
+.trace-issue.err .trace-issue-mark {
+    color: var(--mud-palette-error);
+}
+
+.trace-issue.warn .trace-issue-mark {
+    color: var(--mud-palette-warning);
+}
+
+.trace-issue-text {
+    flex: 1;
+    min-width: 0;
+}
+
+.trace-issue .ml-auto {
+    margin-left: auto;
+}
+

@@ -1,0 +1,161 @@
+@inject TagService Tags
+@inject TagWriteService Writes
+@inject ITagRuntime Runtime
+
+<MudDialog>
+    <DialogContent>
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate Color="Color.Primary" />
+        }
+        else if (_error is not null && _tag is null)
+        {
+            <MudAlert Severity="Severity.Error" Dense>@_error</MudAlert>
+        }
+        else if (_tag is not null)
+        {
+            <MudAlert Severity="Severity.Info" Dense Class="mb-3">
+                受控写入：仅支持启用且已授权读写的 Coil / Holding Register Tag。写入后自动读回验证并记录审计；
+                已绑定手动输出的 Tag 请改用手动输出页面操作。
+            </MudAlert>
+            @if (_error is not null)
+            {
+                <MudAlert Severity="Severity.Error" Dense Class="mb-3">@_error</MudAlert>
+            }
+
+            <div class="d-flex flex-wrap gap-2 mb-2">
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@GetDeviceName()</MudChip>
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="mono">@GetAddress()</MudChip>
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@_tag.DataType</MudChip>
+                @if (!IsBool)
+                {
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                        量程 @(_tag.MinValue?.ToString("0.###") ?? "—") ~ @(_tag.MaxValue?.ToString("0.###") ?? "—") @_tag.Unit
+                    </MudChip>
+                }
+            </div>
+
+            <MudText Typo="Typo.body2" Class="mb-3">
+                当前值：<strong class="mono">@FormatObject(_current?.CurrentValue)</strong> @(IsBool ? "" : _tag.Unit)
+                <span class="ml-2" style="opacity:.7">（质量 @(_current?.Quality.ToString() ?? "—")）</span>
+            </MudText>
+
+            @if (IsBool)
+            {
+                <MudSwitch T="bool" @bind-Value="_booleanValue" Color="Color.Primary"
+                           Label="写入值（开 / 关）" Disabled="@(_writing || _result is not null)" />
+            }
+            else
+            {
+                <MudNumericField T="double" @bind-Value="_numericValue" Label="写入值（工程值）"
+                                 Variant="Variant.Outlined" Immediate="true"
+                                 Disabled="@(_writing || _result is not null)" />
+            }
+
+            @if (_result is null)
+            {
+                <MudCheckBox T="bool" @bind-Value="_confirmed" Color="Color.Warning" Class="mt-2"
+                             Label="我已核对设备、地址与写入值，确认写入" />
+            }
+            else
+            {
+                <MudAlert Severity="@(_result.Succeeded ? Severity.Success : Severity.Error)" Dense Class="mt-3">
+                    @_result.Message
+                </MudAlert>
+            }
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Close" Disabled="@_writing">@(_result is null ? "取消" : "关闭")</MudButton>
+        @if (_tag is not null && _result is null)
+        {
+            <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                       Disabled="@(_writing || !_confirmed)"
+                       OnClick="WriteAsync">
+                @(_writing ? "写入并验证中…" : "写入并验证")
+            </MudButton>
+        }
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] public IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public Guid TagId { get; set; }
+
+    private Tag? _tag;
+    private TagSnapshot? _current;
+    private bool _loading = true;
+    private bool _writing;
+    private bool _confirmed;
+    private bool _booleanValue;
+    private double _numericValue;
+    private TagWriteService.TagWriteResult? _result;
+    private string? _error;
+
+    private bool IsBool => _tag?.DataType == TagDataType.Bool;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _tag = (await Tags.GetAllAsync()).SingleOrDefault(x => x.Id == TagId);
+            if (_tag is null)
+            {
+                _error = "Tag 不存在或已被删除。";
+                return;
+            }
+            _current = Runtime.GetTagSnapshot(TagId);
+            _booleanValue = _current.CurrentValue is bool flag && flag;
+            _numericValue = _current.CurrentValue is double number ? number : _tag.MinValue ?? 0;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private string GetDeviceName() => _tag?.Device?.Name ?? "设备未知";
+
+    private string GetAddress()
+        => _tag is null ? "—"
+            : _tag.AddressType == AddressType.Coil ? $"Coil[{_tag.Address}]"
+            : $"HoldingRegister[{_tag.Address}]";
+
+    private static string FormatObject(object? value)
+        => value switch
+        {
+            bool boolean => boolean ? "开" : "关",
+            double number => number.ToString("0.######"),
+            null => "—",
+            _ => value.ToString() ?? "—"
+        };
+
+    private async Task WriteAsync()
+    {
+        if (_tag is null || _writing || !_confirmed)
+            return;
+        _writing = true;
+        _error = null;
+        try
+        {
+            _result = await Writes.WriteAsync(
+                TagId,
+                engineeringValue: IsBool ? null : _numericValue,
+                booleanValue: IsBool ? _booleanValue : null);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _writing = false;
+        }
+    }
+
+    private void Close() => Dialog.Close(DialogResult.Ok(_result?.Succeeded ?? false));
+}

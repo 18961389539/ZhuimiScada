@@ -1,0 +1,222 @@
+@inject RecipeApplyService RecipeApply
+
+<MudDialog>
+    <DialogContent>
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate Color="Color.Primary" />
+        }
+        else if (_error is not null && Preview is null)
+        {
+            <MudAlert Severity="Severity.Error" Dense>@_error</MudAlert>
+        }
+        else if (Preview is not null)
+        {
+            @if (_error is not null)
+            {
+                <MudAlert Severity="Severity.Error" Dense Class="mb-3">@_error</MudAlert>
+            }
+            else
+            {
+                <MudAlert Severity="@(Preview.CanApply ? Severity.Info : Severity.Error)" Dense Class="mb-3">
+                    @if (Preview.CanApply)
+                    {
+                        <span>将把配方 <strong>@Preview.RecipeName</strong> 的设定写入设备 <strong>@Preview.DeviceName</strong>。</span>
+                    }
+                    else
+                    {
+                        <span>@Preview.BlockReason</span>
+                    }
+                </MudAlert>
+            }
+
+            <div class="recipe-apply-meta">
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">
+                    设备：@Preview.DeviceName
+                </MudChip>
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                    配方版本：v@(Preview.RecipeRevision)
+                </MudChip>
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                    预览时间：@Preview.CapturedAt.ToLocalTime().ToString("HH:mm:ss")
+                </MudChip>
+            </div>
+            <div class="recipe-apply-endpoint">
+                <strong>PLC 连接目标：</strong><span class="mono">@Preview.DeviceEndpoint</span>
+            </div>
+
+            @if (Preview.Items.Count > 0)
+            {
+                <MudTable Items="Preview.Items" Dense Hover Elevation="0" Breakpoint="Breakpoint.Sm"
+                          Class="recipe-apply-table">
+                    <HeaderContent>
+                        <MudTh>设定项</MudTh>
+                        <MudTh>地址</MudTh>
+                        <MudTh>设备当前值</MudTh>
+                        <MudTh>配方目标值</MudTh>
+                        <MudTh>状态</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="设定项"><strong>@context.TagName</strong></MudTd>
+                        <MudTd DataLabel="地址" Class="mono">@context.Address</MudTd>
+                        <MudTd DataLabel="设备当前值" Class="mono">@FormatValue(context.CurrentValue)@context.Unit</MudTd>
+                        <MudTd DataLabel="配方目标值" Class="mono">@FormatValue(context.TargetValue)@context.Unit</MudTd>
+                        <MudTd DataLabel="状态">
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                     Color="@(context.Error is null ? Color.Success : Color.Error)">
+                                @(context.Error ?? "可下发")
+                            </MudChip>
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+
+            @if (Preview.CanApply && _result is null)
+            {
+                <MudAlert Severity="Severity.Warning" Dense Class="mt-3">
+                    多个 Modbus 写入不是 PLC 侧原子事务。发生失败时系统会尝试按原值回滚并读回验证，但仍需遵守设备工艺与 PLC 联锁要求。
+                </MudAlert>
+                <MudCheckBox T="bool" @bind-Value="_confirmed" Color="Color.Warning"
+                             Label="我已核对设备与每项当前值/目标值，确认下发" Class="mt-2" />
+            }
+
+            @if (_result is not null)
+            {
+                <MudAlert Severity="@(_result.Succeeded ? Severity.Success : Severity.Error)" Dense Class="mt-3">
+                    @_result.Summary
+                </MudAlert>
+                <MudTable Items="_result.Items" Dense Hover Elevation="0" Breakpoint="Breakpoint.Sm"
+                          Class="recipe-apply-table mt-2">
+                    <HeaderContent>
+                        <MudTh>设定项</MudTh>
+                        <MudTh>目标值</MudTh>
+                        <MudTh>结果</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="设定项">@context.TagName</MudTd>
+                        <MudTd DataLabel="目标值" Class="mono">@FormatValue(context.TargetValue)</MudTd>
+                        <MudTd DataLabel="结果">
+                            <div>@context.Status</div>
+                            @if (context.Error is not null)
+                            {
+                                <small class="recipe-apply-error">@context.Error</small>
+                            }
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+                @if (_result.WritesStarted && _result.RollbackSucceeded == false)
+                {
+                    <MudAlert Severity="Severity.Error" Class="mt-3">
+                        回滚未能全部确认。请立即在设备侧核对上述地址，不要启动新测试。
+                    </MudAlert>
+                }
+            }
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Close" Disabled="@_applying">
+            @(_result is null ? "取消" : "关闭")
+        </MudButton>
+        @if (_result is null)
+        {
+            @if (Preview?.CanApply == true && _error is null)
+            {
+                <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                           Disabled="@(_loading || _applying || !_confirmed)"
+                           OnClick="ApplyAsync">
+                    @(_applying ? "下发并验证中…" : "确认下发")
+                </MudButton>
+            }
+            else
+            {
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                           Disabled="@(_loading || _applying)" OnClick="RefreshPreviewAsync">
+                    重新预览
+                </MudButton>
+            }
+        }
+        else
+        {
+            <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                       Disabled="@_applying" OnClick="RefreshPreviewAsync">
+                重新预览
+            </MudButton>
+        }
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] public IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public Guid RecipeId { get; set; }
+
+    private RecipeApplyService.ApplyPreview? Preview { get; set; }
+    private RecipeApplyService.ApplyResult? _result;
+    private bool _loading = true;
+    private bool _applying;
+    private bool _confirmed;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync() => await RefreshPreviewAsync();
+
+    private async Task RefreshPreviewAsync()
+    {
+        _loading = true;
+        _confirmed = false;
+        _result = null;
+        Preview = null;
+        _error = null;
+        try
+        {
+            Preview = await RecipeApply.PreviewAsync(RecipeId);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task ApplyAsync()
+    {
+        if (Preview is not { CanApply: true } preview || !_confirmed || _applying)
+            return;
+        _applying = true;
+        _error = null;
+        try
+        {
+            _result = await RecipeApply.ApplyAsync(
+                preview.RecipeId,
+                preview.RecipeRevision,
+                preview.ConfigurationFingerprint,
+                preview.CurrentValuesFingerprint);
+        }
+        catch (Exception ex)
+        {
+            _error = $"下发前未能完成操作：{ex.Message}";
+        }
+        finally
+        {
+            _applying = false;
+        }
+    }
+
+    private static string FormatValue(object? value)
+        => value switch
+        {
+            bool boolean => boolean ? "开" : "关",
+            double number => number.ToString("0.######"),
+            null => "—",
+            _ => value.ToString() ?? "—"
+        };
+
+    private void Close()
+    {
+        if (_result is null)
+            Dialog.Cancel();
+        else
+            Dialog.Close(DialogResult.Ok(_result.Succeeded));
+    }
+}

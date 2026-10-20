@@ -1,0 +1,19 @@
+@implements IDisposable
+@inject ITagRuntime Runtime
+<div class="tag-tile"><div><strong>@Name</strong><small>@_snapshot.Quality · @(_snapshot.Timestamp?.ToLocalTime().ToString("HH:mm:ss") ?? "等待采集")</small></div><div class="tag-value" style="@(_snapshot.Quality == TagQuality.Good ? "" : "opacity:.45")">@Display<span>@Unit</span></div></div>
+@code {
+    [Parameter] public Guid TagId { get; set; }
+    [Parameter] public string Name { get; set; } = "";
+    [Parameter] public string Unit { get; set; } = "";
+    [Parameter] public int Precision { get; set; } = 1;
+    private TagSnapshot _snapshot = new(Guid.Empty, null, TagQuality.Uncertain, null, null);
+    private IDisposable? _subscription; private Guid _boundId;
+    private string Display => _snapshot.CurrentValue switch { bool bit => bit ? "ON" : "OFF", double number => number.ToString($"F{Math.Clamp(Precision, 0, 6)}"), _ => "—" };
+    protected override void OnParametersSet()
+    {
+        if (_boundId == TagId) return;
+        _subscription?.Dispose(); _boundId = TagId; _snapshot = Runtime.GetTagSnapshot(TagId);
+        _subscription = Runtime.SubscribeTag(TagId, snapshot => _ = InvokeAsync(() => { _snapshot = snapshot; StateHasChanged(); }));
+    }
+    public void Dispose() => _subscription?.Dispose();
+}

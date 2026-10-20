@@ -1,0 +1,836 @@
+@page "/trace"
+@inherits LivePage
+@using System.Text
+@inject ISnackbar Toast
+@inject IDialogService Dialogs
+@inject SnapshotCaptureService Capture
+<PageTitle>追溯 SN · PLCScada</PageTitle>
+<PageHeading Section="TRACE" title="追溯 SN" Description="PLC 扫码内容（String Tag）实时显示，触发快照记录用于产品追溯。">
+    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+             Color="@(_snTagId is null ? Color.Warning : Color.Success)">
+        @(_snTagId is null ? "SN 来源未配置" : "SN 来源已配置")
+    </MudChip>
+    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+             Color="@(_rule?.Enabled == true ? Color.Success : Color.Default)">
+        @(_rule is null ? "触发未配置" : _rule.Enabled ? "触发已启用" : "触发已停用")
+    </MudChip>
+</PageHeading>
+
+<MudTabs @bind-ActivePanelIndex="_activeTab" Elevation="0" Rounded="false" Outlined="false"
+         ApplyEffectsToContainer="false" KeepPanelsAlive="true" PanelClass="pt-3"
+         Color="Color.Default" SliderColor="Color.Primary" Class="trace-tabs"
+         OnPreviewInteraction="OnPreviewTabAsync">
+
+    <MudTabPanel Text="快照记录" Icon="@Icons.Material.Outlined.History"
+                 BadgeData="@(_todayCount > 0 ? _todayCount.ToString() : null)" BadgeColor="Color.Primary"
+                 ToolTip="查看已抓取的追溯快照">
+        <MudPaper Outlined Elevation="0" Class="table-panel">
+            <MudTable Items="_snapshots" Dense Hover Elevation="0">
+                <ToolBarContent>
+                    <MudText Typo="Typo.body2">共 <strong>@_snapTotal</strong> 条 · 今日 @_todayCount 条</MudText>
+                    <MudSpacer />
+                    <MudSelect T="int" Value="_rangeDays" ValueChanged="OnRangeChangedAsync" Dense
+                               Variant="Variant.Outlined" Margin="Margin.Dense" Class="trace-page-size">
+                        <MudSelectItem T="int" Value="0">全部时间</MudSelectItem>
+                        <MudSelectItem T="int" Value="1">今天</MudSelectItem>
+                        <MudSelectItem T="int" Value="7">近 7 天</MudSelectItem>
+                        <MudSelectItem T="int" Value="30">近 30 天</MudSelectItem>
+                    </MudSelect>
+                    <MudTextField @bind-Value="_snapSearch" Immediate DebounceInterval="400"
+                                  OnDebounceIntervalElapsed="OnSnapSearchChangedAsync"
+                                  Placeholder="搜索 SN 或规则" Variant="Variant.Outlined"
+                                  Margin="Margin.Dense" Class="search-field" />
+                    <MudSelect T="int" Value="_snapPageSize" ValueChanged="OnSnapPageSizeChangedAsync" Dense
+                               Variant="Variant.Outlined" Margin="Margin.Dense" Class="trace-page-size">
+                        <MudSelectItem T="int" Value="50">每页 50 条</MudSelectItem>
+                        <MudSelectItem T="int" Value="100">每页 100 条</MudSelectItem>
+                        <MudSelectItem T="int" Value="200">每页 200 条</MudSelectItem>
+                    </MudSelect>
+                    @if (_exportHref.Length > 0)
+                    {
+                        <a class="trace-export" href="@_exportHref" download="@_exportFileName">导出 CSV</a>
+                    }
+                </ToolBarContent>
+                <HeaderContent>
+                    <MudTh>时间</MudTh>
+                    <MudTh>规则</MudTh>
+                    <MudTh>SN</MudTh>
+                    <MudTh>结论</MudTh>
+                    <MudTh>关键值</MudTh>
+                    <MudTh>操作</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="时间" Class="mono">@context.OccurredAt.ToLocalTime().ToString("MM-dd HH:mm:ss")</MudTd>
+                    <MudTd DataLabel="规则">@context.RuleName</MudTd>
+                    <MudTd DataLabel="SN" Class="mono">@(string.IsNullOrWhiteSpace(context.Sn) ? "—" : context.Sn)</MudTd>
+                    <MudTd DataLabel="结论">
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Filled"
+                                 Color="@VerdictColor(context.ValuesJson)">@VerdictText(context.ValuesJson)</MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="关键值"><small>@Summary(context.ValuesJson)</small></MudTd>
+                    <MudTd DataLabel="操作">
+                        <MudButton Size="Size.Small" OnClick="() => OpenRecordAsync(context)">详情</MudButton>
+                    </MudTd>
+                </RowTemplate>
+                <NoRecordsContent>
+                    <div class="pa-6">
+                        <MudText Typo="Typo.body2" Class="mb-2">还没有快照记录。按以下三步启用：</MudText>
+                        <MudText Typo="Typo.caption">
+                            ① 切到「追溯配置」选择 SN 来源　② 选择触发线圈与抓取点位并保存　③ 触发位为 true 时自动抓取
+                        </MudText>
+                    </div>
+                </NoRecordsContent>
+                <PagerContent>
+                    <div class="trace-pager">
+                        <MudText Typo="Typo.caption" Class="muted">共 @_snapTotal 条 · 第 @_snapPage / @_snapPageCount 页</MudText>
+                        <MudPagination Count="_snapPageCount" Selected="@_snapPage" SelectedChanged="OnSnapPageChangedAsync"
+                                       BoundaryCount="1" MiddleCount="2" Size="Size.Small" />
+                    </div>
+                </PagerContent>
+            </MudTable>
+        </MudPaper>
+    </MudTabPanel>
+
+    <MudTabPanel Text="追溯配置" Icon="@Icons.Material.Outlined.Tune"
+                 BadgeDot="@IsDirty" BadgeColor="Color.Warning"
+                 ToolTip="SN 来源与触发快照设置">
+        <MudGrid Class="trace-config">
+            <MudItem xs="12" md="5">
+                <MudPaper Outlined Elevation="0" Class="pa-5 trace-config-card">
+                    <div class="d-flex align-center flex-wrap gap-2 mb-1">
+                        <MudText Typo="Typo.h6">① SN 来源</MudText>
+                        @if (IsDirty)
+                        {
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Warning">● 未保存</MudChip>
+                        }
+                    </div>
+                    <MudText Typo="Typo.caption" Class="muted mb-3">
+                        选择 PLC 中存放扫码内容的字符串点位；值变化会在 1 秒内自动记录。
+                    </MudText>
+
+                    <MudTextField T="string" @bind-Value="_sourceFilter" Immediate="true"
+                                  Label="筛选（按名称）" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                    <div class="trace-field @(_highlight == "sn" ? "trace-hot" : "")">
+                        <MudSelect T="Guid?" Value="_snTagId" ValueChanged="OnSourceChanged"
+                                   Label="String Tag（PLC 扫码内容）" Variant="Variant.Outlined"
+                                   Margin="Margin.Dense" Class="mt-2">
+                            <MudSelectItem T="Guid?" Value="@((Guid?)null)">不启用</MudSelectItem>
+                            @foreach (var tag in FilteredStringTags())
+                            {
+                                <MudSelectItem T="Guid?" Value="@((Guid?)tag.Id)">
+                                    @($"{tag.Name} · {tag.AddressType}[{tag.Address}] · {tag.StringRegisters} 寄存器")
+                                </MudSelectItem>
+                            }
+                        </MudSelect>
+                    </div>
+                    <MudText Typo="Typo.caption" Class="mt-1" Style="opacity:.7">
+                        共 @_stringTags.Count 个字符串（String）点位。
+                    </MudText>
+
+                    <MudDivider Class="my-4" />
+
+                    <div class="d-flex flex-wrap gap-2 align-center">
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                                   Disabled="@(_savingRule || _triggerTagId is null || _rows.Count == 0 || !IsDirty || HasErrors)"
+                                   OnClick="SaveConfigAsync">@(_savingRule ? "保存中…" : "保存配置")</MudButton>
+                        <MudButton Variant="Variant.Outlined" OnClick="ReloadAllAsync">重新载入</MudButton>
+                        @if (HasErrors)
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Error">@ErrorCount 个错误需先修正</MudText>
+                        }
+                    </div>
+                    <MudText Typo="Typo.caption" Class="mt-3" Style="opacity:.6">
+                        最后刷新：@_lastRefreshAt.ToLocalTime().ToString("HH:mm:ss")
+                    </MudText>
+                </MudPaper>
+            </MudItem>
+
+            <MudItem xs="12" md="7">
+                <MudPaper Outlined Elevation="0" Class="pa-5 trace-config-card">
+                    <div class="d-flex align-center flex-wrap gap-2 mb-1">
+                        <MudText Typo="Typo.h6">② 触发快照</MudText>
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                 Color="@(_rule is null ? Color.Default : _rule.Enabled ? Color.Success : Color.Warning)">
+                            @(_rule is null ? "未配置" : _rule.Enabled ? "已启用" : "已停用")
+                        </MudChip>
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Text">
+                            @(_rule is null ? "从未触发" : $"最近 {FormatLastTrigger(_rule.Id)}")
+                        </MudChip>
+                        <MudSpacer />
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
+                                   Disabled="@(_rule?.TriggerTag is null || _previewing)"
+                                   OnClick="PreviewCaptureAsync">@(_previewing ? "读取中…" : "试抓预览")</MudButton>
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning"
+                                   Disabled="@(_rule?.TriggerTag is null || _testingTrigger)"
+                                   OnClick="TestTriggerAsync">@(_testingTrigger ? "触发中…" : "测试触发")</MudButton>
+                    </div>
+                    <MudText Typo="Typo.caption" Class="muted mb-3">
+                        触发源必须是线圈（Coil）Bool：为 true 时抓取所选点位、保存快照（含当前 SN）并自动复位为 false。
+                    </MudText>
+
+                    <div class="trace-form-row @(_highlight == "trigger" ? "trace-hot" : "")">
+                        <MudTextField T="string" @bind-Value="_triggerFilter" Immediate="true"
+                                      Label="筛选触发源（按名称）" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                        <MudSelect T="Guid?" Value="_triggerTagId" ValueChanged="OnTriggerChanged"
+                                   Label="触发源（Coil Bool）" Variant="Variant.Outlined" Margin="Margin.Dense">
+                            @foreach (var tag in FilteredTriggerTags())
+                            {
+                                <MudSelectItem T="Guid?" Value="@((Guid?)tag.Id)">
+                                    @($"{tag.Name} · Coil[{tag.Address}]")
+                                </MudSelectItem>
+                            }
+                        </MudSelect>
+                    </div>
+
+                    <div class="d-flex align-center flex-wrap gap-2 mt-3">
+                        <MudSwitch T="bool" Value="_ruleEnabled" ValueChanged="OnEnabledChanged"
+                                   Color="Color.Primary" Label="启用" />
+                    </div>
+                </MudPaper>
+            </MudItem>
+
+            <MudItem xs="12">
+                <MudPaper Outlined Elevation="0" Class="pa-5">
+                    <div class="trace-points-head">
+                        <MudText Typo="Typo.h6">③ 采集项</MudText>
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Text">@_rows.Count 项</MudChip>
+                        <MudText Typo="Typo.caption" Class="muted">别名 / 单位 / 小数位决定追溯报告里的呈现</MudText>
+                        <MudSpacer />
+                        <MudSelect T="Guid" SelectedValues="_pickerPoints" SelectedValuesChanged="OnPickerChanged"
+                                   MultiSelection="true" ToStringFunc="@PointLabel"
+                                   Placeholder="添加点位（可多选）" Variant="Variant.Outlined"
+                                   Margin="Margin.Dense" Class="trace-point-picker">
+                            @foreach (var tag in FilteredPointTags())
+                            {
+                                <MudSelectItem T="Guid" Value="@tag.Id">@($"{tag.Name} · {tag.DataType}")</MudSelectItem>
+                            }
+                        </MudSelect>
+                        <MudTextField T="string" @bind-Value="_tagFilter" Immediate="true"
+                                      Placeholder="筛选添加列表" Variant="Variant.Outlined"
+                                      Margin="Margin.Dense" Class="trace-point-filter" />
+                    </div>
+
+                    @if (_rows.Count == 0)
+                    {
+                        <MudText Typo="Typo.caption" Class="muted mt-3">
+                            还没有采集项：在上方下拉框里选择一个或多个点位。
+                        </MudText>
+                    }
+                    else
+                    {
+                        <div class="trace-point-table mt-3 @(_highlight == "points" ? "trace-hot" : "")">
+                            <div class="trace-point-row trace-point-th">
+                                <span>点位</span><span>别名</span><span>单位</span>
+                                <span>小数</span><span>必填</span><span class="trace-num">当前值</span><span></span>
+                            </div>
+                            @foreach (var row in _rows)
+                            {
+                                <div class="trace-point-row @(IsHotPoint(row.TagId) ? "trace-hot" : "")" @key="row.TagId">
+                                    <span class="trace-point-name" title="@row.Name">@row.Name</span>
+                                    <MudTextField T="string" Value="row.Alias" ValueChanged="v => row.Alias = v"
+                                                  Immediate="true" Variant="Variant.Outlined"
+                                                  Margin="Margin.Dense" />
+                                    <MudTextField T="string" Value="row.Unit" ValueChanged="v => row.Unit = v"
+                                                  Immediate="true" Placeholder="—" Variant="Variant.Outlined"
+                                                  Margin="Margin.Dense" />
+                                    <MudNumericField T="int" Value="row.Decimals" ValueChanged="v => row.Decimals = v"
+                                                     Min="0" Max="6" Variant="Variant.Outlined"
+                                                     Margin="Margin.Dense" HideSpinButtons="true" />
+                                    <MudCheckBox T="bool" Value="row.Required" ValueChanged="v => row.Required = v"
+                                                 Dense="true" Color="Color.Primary" />
+                                    <span class="trace-num mono">@LiveValue(row)</span>
+                                    <MudIconButton Size="Size.Small" Icon="@Icons.Material.Outlined.Close"
+                                                   Color="Color.Default" OnClick="() => RemovePoint(row.TagId)" />
+                                </div>
+                            }
+                        </div>
+                    }
+
+                    @{
+                        var issues = Issues();
+                        var errorCount = issues.Count(x => x.IsError);
+                        var warnCount = issues.Count - errorCount;
+                    }
+                    @if (issues.Count > 0)
+                    {
+                        <div class="trace-issues mt-3">
+                            <div class="trace-issues-head">
+                                <MudText Typo="Typo.subtitle2">校验与问题</MudText>
+                                @if (errorCount > 0)
+                                {
+                                    <span class="trace-tag err">@errorCount 错误</span>
+                                }
+                                @if (warnCount > 0)
+                                {
+                                    <span class="trace-tag warn">@warnCount 警告</span>
+                                }
+                                <MudSpacer />
+                                <MudText Typo="Typo.caption" Class="muted">点击「定位」高亮对应控件</MudText>
+                            </div>
+                            @foreach (var issue in issues)
+                            {
+                                <div class="trace-issue @(issue.IsError ? "err" : "warn")">
+                                    <span class="trace-issue-mark">@(issue.IsError ? "✕" : "!")</span>
+                                    <span class="trace-issue-text">@issue.Message</span>
+                                    <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Primary"
+                                               Class="ml-auto" OnClick="() => LocateAsync(issue.Field)">定位</MudButton>
+                                </div>
+                            }
+                        </div>
+                    }
+                    else if (_rows.Count > 0)
+                    {
+                        <MudText Typo="Typo.caption" Class="mt-3" Style="color:var(--mud-palette-success)">
+                            校验通过：没有发现问题。
+                        </MudText>
+                    }
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+    </MudTabPanel>
+</MudTabs>
+
+@code {
+    private IReadOnlyList<Tag> _stringTags = [];
+    private IReadOnlyList<Tag> _allTags = [];
+    private IReadOnlyList<Tag> _triggerTags = [];
+    private IReadOnlyList<SnapshotRule> _rules = [];
+    private IReadOnlyList<SnapshotRecord> _snapshots = [];
+    private IReadOnlyDictionary<Guid, DateTimeOffset> _ruleLastTimes = new Dictionary<Guid, DateTimeOffset>();
+    private SnapshotRule? _rule;
+    private Guid? _snTagId;
+    private Guid? _triggerTagId;
+    private List<PointRow> _rows = [];
+    private IEnumerable<Guid> _pickerPoints = Array.Empty<Guid>();
+    private string _tagFilter = "";
+    private string _sourceFilter = "";
+    private string _triggerFilter = "";
+    private bool _ruleEnabled = true;
+    private bool _savingRule;
+    private bool _testingTrigger;
+    private bool _previewing;
+    private string? _highlight;
+    private string _snapSearch = "";
+    private int _rangeDays;
+    private int _snapPage = 1;
+    private int _snapPageCount = 1;
+    private int _snapPageSize = 50;
+    private int _snapTotal;
+    private int _todayCount;
+    private bool _loaded;
+    private int _activeTab;
+    private DateTimeOffset _lastAutoRefresh = DateTimeOffset.MinValue;
+    private DateTimeOffset _lastRefreshAt = DateTimeOffset.MinValue;
+    private string _exportHref = "";
+    private string _exportFileName = "Snapshots.csv";
+
+    private const int RecordsTab = 0;
+    private const int ConfigTab = 1;
+
+    // 已保存值（用于脏标记）
+    private Guid? _savedSnTagId;
+    private Guid? _savedTriggerTagId;
+    private bool _savedEnabled = true;
+    private string _savedSignature = "";
+
+    private bool IsDirty =>
+        _snTagId != _savedSnTagId ||
+        _triggerTagId != _savedTriggerTagId ||
+        _ruleEnabled != _savedEnabled ||
+        PointsSignature(_rows) != _savedSignature;
+
+    protected override async Task RefreshAsync()
+    {
+        if (!_loaded)
+        {
+            await ReloadAllAsync();
+            return;
+        }
+        if (DateTimeOffset.UtcNow - _lastAutoRefresh < TimeSpan.FromSeconds(5))
+            return;
+        _lastAutoRefresh = DateTimeOffset.UtcNow;
+        await RefreshTagsAsync();
+        await LoadSnapshotsAsync();
+    }
+
+    private async Task ReloadAllAsync()
+    {
+        await RefreshTagsAsync();
+        _snTagId = await Store.GetSnTagIdAsync();
+        _savedSnTagId = _snTagId;
+        await LoadSnapshotsAsync();
+        ResetRuleForm();
+        _lastRefreshAt = DateTimeOffset.UtcNow;
+        _loaded = true;
+    }
+
+    private async Task RefreshTagsAsync()
+    {
+        _allTags = (await Store.GetTagsAsync()).OrderBy(x => x.Name).ToArray();
+        _stringTags = _allTags.Where(x => x.DataType == TagDataType.String).ToArray();
+        _triggerTags = _allTags
+            .Where(x => x.DataType == TagDataType.Bool && x.AddressType == AddressType.Coil)
+            .ToArray();
+    }
+
+    private void ResetRuleForm()
+    {
+        var rule = _rules.FirstOrDefault();
+        _rule = rule;
+        _triggerTagId = rule?.TriggerTagId ?? _triggerTags.FirstOrDefault()?.Id;
+        _rows = rule is null
+            ? []
+            : rule.Points.OrderBy(x => x.SortOrder).Select(ToRow).ToList();
+        _ruleEnabled = rule?.Enabled ?? true;
+        _savedTriggerTagId = _triggerTagId;
+        _savedEnabled = _ruleEnabled;
+        _savedSignature = PointsSignature(_rows);
+        _pickerPoints = Array.Empty<Guid>();
+    }
+
+    private static PointRow ToRow(SnapshotRulePoint point) => new()
+    {
+        TagId = point.TagId,
+        Name = point.Tag?.Name ?? "已删除点位",
+        DataType = point.Tag?.DataType ?? TagDataType.Bool,
+        Alias = point.Alias,
+        Unit = point.Unit,
+        Decimals = point.Decimals,
+        Required = point.Required
+    };
+
+    // 采集项签名：包含顺序与全部口径字段，任一处变化即视为未保存。
+    private static string PointsSignature(IEnumerable<PointRow> rows)
+        => string.Join("|", rows.Select(x => $"{x.TagId:N}:{x.Alias}:{x.Unit}:{x.Decimals}:{x.Required}"));
+
+    /// <summary>丢弃未保存的修改，表单回到已保存状态。</summary>
+    private void ResetConfig()
+    {
+        _snTagId = _savedSnTagId;
+        ResetRuleForm();
+    }
+
+    private async Task LoadSnapshotsAsync()
+    {
+        _rules = await Store.GetSnapshotRulesAsync();
+        _rule = _rules.FirstOrDefault();
+        _ruleLastTimes = await Store.GetSnapshotLastTimesAsync(_rules.Select(x => x.Id).ToArray());
+        var from = RangeFrom();
+        var page = await Store.QuerySnapshotRecordsAsync(_snapPage, _snapPageSize, _snapSearch, from);
+        _snapTotal = page.TotalCount;
+        _snapPageCount = Math.Max(1, (int)Math.Ceiling(page.TotalCount / (double)_snapPageSize));
+        if (_snapPage > _snapPageCount)
+        {
+            _snapPage = _snapPageCount;
+            page = await Store.QuerySnapshotRecordsAsync(_snapPage, _snapPageSize, _snapSearch, from);
+        }
+        _snapshots = page.Items;
+        var todayStart = DateTime.Today.ToUniversalTime();
+        _todayCount = (await Store.QuerySnapshotRecordsAsync(1, 1, null, todayStart)).TotalCount;
+        await UpdateExportAsync(from);
+        _lastRefreshAt = DateTimeOffset.UtcNow;
+    }
+
+    private DateTimeOffset? RangeFrom() => _rangeDays switch
+    {
+        1 => DateTime.Today.ToUniversalTime(),
+        7 or 30 => DateTimeOffset.UtcNow.AddDays(-_rangeDays),
+        _ => null
+    };
+
+    private async Task UpdateExportAsync(DateTimeOffset? from)
+    {
+        var items = await Store.QuerySnapshotRecordsForExportAsync(_snapSearch, from);
+        _exportHref = items.Count == 0 ? "" : BuildCsvHref(items);
+        _exportFileName = $"Snapshots-{DateTime.Now:yyyyMMdd-HHmmss}.csv";
+    }
+
+    private static string BuildCsvHref(IReadOnlyList<SnapshotRecord> items)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine("时间,规则,SN,结论,点位值");
+        foreach (var item in items)
+        {
+            builder.Append(item.OccurredAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")).Append(',')
+                .Append(Csv(item.RuleName)).Append(',')
+                .Append(Csv(item.Sn ?? "")).Append(',')
+                .Append(VerdictText(item.ValuesJson)).Append(',')
+                .Append(Csv(AllValues(item.ValuesJson)))
+                .AppendLine();
+        }
+        return $"data:text/csv;charset=utf-8;base64,{Convert.ToBase64String(
+            Encoding.UTF8.GetBytes("\uFEFF" + builder))}";
+    }
+
+    private static string Csv(string value)
+        => value.AsSpan().IndexOfAny(",\"\r\n") < 0 ? value : $"\"{value.Replace("\"", "\"\"")}\"";
+
+    private void OnSourceChanged(Guid? tagId) => _snTagId = tagId;
+
+    private void OnTriggerChanged(Guid? tagId) => _triggerTagId = tagId;
+
+    private void OnEnabledChanged(bool enabled) => _ruleEnabled = enabled;
+
+    /// <summary>离开「追溯配置」时若有未保存修改，先确认。Cancel 由 MudTabs 处理，不会切走。</summary>
+    private async Task OnPreviewTabAsync(TabInteractionEventArgs args)
+    {
+        if (args.PanelIndex != RecordsTab || _activeTab != ConfigTab || !IsDirty) return;
+        var discard = await Dialogs.ShowMessageBox("放弃未保存的修改？",
+            "追溯配置有未保存的修改，切换到「快照记录」将丢失这些修改。",
+            yesText: "放弃修改", cancelText: "继续编辑");
+        if (discard == true)
+            ResetConfig();
+        else
+            args.Cancel = true;
+    }
+
+    private IEnumerable<Tag> FilteredStringTags()
+    {
+        var term = _sourceFilter.Trim();
+        return term.Length == 0
+            ? _stringTags
+            : _stringTags.Where(x => x.Name.Contains(term, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private IEnumerable<Tag> FilteredTriggerTags()
+    {
+        var term = _triggerFilter.Trim();
+        return term.Length == 0
+            ? _triggerTags
+            : _triggerTags.Where(x => x.Name.Contains(term, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private IEnumerable<Tag> FilteredPointTags()
+    {
+        var term = _tagFilter.Trim();
+        return term.Length == 0
+            ? _allTags
+            : _allTags.Where(x => x.Name.Contains(term, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>多选下拉的已选项文案：显示点位名称而不是 Guid。</summary>
+    private string PointLabel(Guid tagId)
+        => _allTags.FirstOrDefault(x => x.Id == tagId)?.Name ?? tagId.ToString();
+
+    // ───────────────────────── 配置校验（预览 3） ─────────────────────────
+    // 错误会阻止保存；警告只是提示。Field 用于「定位」到对应控件（sn / trigger / points / point:{id}）。
+    private sealed record ConfigIssue(string Field, string Message, bool IsError);
+
+    private bool HasErrors => Issues().Any(x => x.IsError);
+
+    private int ErrorCount => Issues().Count(x => x.IsError);
+
+    private IReadOnlyList<ConfigIssue> Issues()
+    {
+        var list = new List<ConfigIssue>();
+
+        if (_snTagId is null)
+            list.Add(new("sn", "未配置 SN 来源：快照将不含条码，追溯价值有限", false));
+        else if (_allTags.All(x => x.Id != _snTagId))
+            list.Add(new("sn", "SN 来源点位已不存在，请重新选择", true));
+
+        if (_triggerTagId is null)
+            list.Add(new("trigger", "未选择触发源", true));
+        else if (_allTags.FirstOrDefault(x => x.Id == _triggerTagId) is not { } trigger)
+            list.Add(new("trigger", "触发源点位已不存在，请重新选择", true));
+        else if (trigger.DataType != TagDataType.Bool || trigger.AddressType != AddressType.Coil)
+            list.Add(new("trigger", "触发源必须是线圈（Coil）上的 Bool 点位", true));
+        else if (Runtime.GetTagSnapshot(trigger.Id).CurrentValue is true)
+            list.Add(new("trigger", "触发位当前为 ON：置位期间会被抓取一次并复位，请确认没有其他逻辑占用该位", false));
+
+        if (_rows.Count == 0)
+            list.Add(new("points", "至少需要一个采集项", true));
+
+        foreach (var alias in _rows
+                     .Where(x => !string.IsNullOrWhiteSpace(x.Alias))
+                     .GroupBy(x => x.Alias!.Trim(), StringComparer.OrdinalIgnoreCase)
+                     .Where(g => g.Count() > 1)
+                     .Select(g => g.Key))
+            list.Add(new("points", $"采集项别名「{alias}」重复，追溯报告列名会冲突", true));
+
+        foreach (var row in _rows)
+        {
+            var field = "point:" + row.TagId;
+            if ((row.Alias ?? "").Trim().Length > 40)
+                list.Add(new(field, $"「{row.Name}」别名超过 40 个字符", true));
+            if ((row.Unit ?? "").Trim().Length > 20)
+                list.Add(new(field, $"「{row.Name}」单位超过 20 个字符", true));
+            if (row.Decimals is < 0 or > 6)
+                list.Add(new(field, $"「{row.Name}」小数位必须在 0–6 之间", true));
+            else if (row.Decimals > 0 && row.DataType is TagDataType.Bool or TagDataType.String)
+                list.Add(new(field, $"「{row.Name}」是{(row.DataType == TagDataType.Bool ? "布尔" : "字符串")}点位，小数位不生效", false));
+
+            if (!row.Required) continue;
+            var snapshot = Runtime.GetTagSnapshot(row.TagId);
+            if (snapshot.CurrentValue is null)
+                list.Add(new(field, $"必填项「{row.Name}」当前没有读数", false));
+            else if (snapshot.Quality.ToString() != "Good")
+                list.Add(new(field, $"必填项「{row.Name}」质量为 {snapshot.Quality}", false));
+        }
+
+        return list.OrderBy(x => x.IsError ? 0 : 1).ToArray();
+    }
+
+    private bool IsHotPoint(Guid tagId) => _highlight == "point:" + tagId;
+
+    private async Task LocateAsync(string field)
+    {
+        _highlight = field;
+        StateHasChanged();
+        await Task.Delay(2200);
+        if (_highlight == field)
+        {
+            _highlight = null;
+            StateHasChanged();
+        }
+    }
+
+    // ───────────────────────── 试抓预览（预览 4） ─────────────────────────
+    private string? CurrentSn()
+    {
+        if (_snTagId is not Guid id) return null;
+        return Runtime.GetTagSnapshot(id).CurrentValue as string;
+    }
+
+    private async Task PreviewCaptureAsync()
+    {
+        if (_rule?.TriggerTag is null || _previewing) return;
+        _previewing = true;
+        try
+        {
+            var preview = await Capture.PreviewAsync(_rule, CurrentSn());
+            var dialog = await Dialogs.ShowAsync<SnapshotPreviewDialog>(
+                "试抓预览",
+                new DialogParameters<SnapshotPreviewDialog> { { x => x.Preview, preview } },
+                new() { FullWidth = true, MaxWidth = MaxWidth.Medium, CloseButton = true });
+            var result = dialog is null ? null : await dialog.Result;
+            if (result is null || result.Canceled || result.Data is not true) return;
+
+            await Capture.CommitAsync(preview);
+            Toast.Add("已按预览内容写入一条快照", Severity.Success);
+            await LoadSnapshotsAsync();
+            _activeTab = RecordsTab;
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"试抓失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _previewing = false;
+        }
+    }
+
+    /// <summary>勾选即加入表格（只处理新增；取消勾选不移除，移除用行尾按钮）。</summary>
+    private void OnPickerChanged(IEnumerable<Guid> ids)
+    {
+        foreach (var id in ids ?? Array.Empty<Guid>())
+        {
+            if (_rows.Any(x => x.TagId == id)) continue;
+            var tag = _allTags.FirstOrDefault(x => x.Id == id);
+            if (tag is null) continue;
+            _rows.Add(new PointRow
+            {
+                TagId = tag.Id,
+                Name = tag.Name,
+                DataType = tag.DataType,
+                Decimals = tag.DataType is TagDataType.Float32 or TagDataType.Float64 ? 2 : 0,
+                Required = true
+            });
+        }
+        _pickerPoints = Array.Empty<Guid>();
+    }
+
+    private void RemovePoint(Guid tagId) => _rows.RemoveAll(x => x.TagId == tagId);
+
+    /// <summary>配置时的当前值预览：按该行的小数位与单位格式化。</summary>
+    private string LiveValue(PointRow row)
+    {
+        var snapshot = Runtime.GetTagSnapshot(row.TagId);
+        var text = snapshot.CurrentValue switch
+        {
+            null => "—",
+            bool flag => flag ? "TRUE" : "FALSE",
+            double number => number.ToString("F" + Math.Clamp(row.Decimals, 0, 6),
+                System.Globalization.CultureInfo.InvariantCulture),
+            string value => value,
+            var other => other.ToString() ?? "—"
+        };
+        if (snapshot.CurrentValue is null or string or bool) return text;
+        var unit = (row.Unit ?? "").Trim();
+        return unit.Length == 0 ? text : $"{text} {unit}";
+    }
+
+    private string FormatLastTrigger(Guid ruleId)
+        => _ruleLastTimes.TryGetValue(ruleId, out var last)
+            ? last.ToLocalTime().ToString("MM-dd HH:mm")
+            : "从未触发";
+
+    private async Task SaveConfigAsync()
+    {
+        if (_savingRule || _triggerTagId is not Guid triggerId || !IsDirty) return;
+        if (_rows.Count == 0)
+        {
+            Toast.Add("请至少选择一个采集项", Severity.Warning);
+            return;
+        }
+        var blocking = Issues().Where(x => x.IsError).ToArray();
+        if (blocking.Length > 0)
+        {
+            Toast.Add($"有 {blocking.Length} 个校验错误未修正：{blocking[0].Message}", Severity.Error);
+            return;
+        }
+        _savingRule = true;
+        var errors = new List<string>();
+        try
+        {
+            await Store.SetSnTagIdAsync(_snTagId);
+        }
+        catch (Exception ex)
+        {
+            errors.Add($"SN 来源：{ex.Message}");
+        }
+        try
+        {
+            await Store.SaveSingleSnapshotRuleAsync(new SnapshotRule
+            {
+                Id = _rule?.Id ?? Guid.NewGuid(),
+                Name = _rule?.Name ?? "触发快照",
+                TriggerTagId = triggerId,
+                Enabled = _ruleEnabled
+            }, _rows.Select(x => new SnapshotPointInput(
+                x.TagId, x.Alias, x.Unit, Math.Clamp(x.Decimals, 0, 6), x.Required)).ToArray());
+        }
+        catch (Exception ex)
+        {
+            errors.Add($"触发快照：{ex.Message}");
+        }
+        _savingRule = false;
+        Toast.Add(errors.Count == 0 ? "追溯配置已保存" : $"保存未完全成功（{string.Join("；", errors)}）",
+            errors.Count == 0 ? Severity.Success : Severity.Error);
+        await ReloadAllAsync();
+        if (errors.Count == 0)
+            _activeTab = RecordsTab;
+    }
+
+    private async Task TestTriggerAsync()
+    {
+        if (_rule?.TriggerTag is null || _testingTrigger) return;
+        if (await Dialogs.ShowMessageBox("测试触发",
+                $"将把触发线圈「{_rule.TriggerTag.Name}」（Coil[{_rule.TriggerTag.Address}]）置为 1，抓取一次快照后自动复位。确定继续吗？",
+                yesText: "触发", cancelText: "取消") != true)
+            return;
+        if (!_rule.Enabled)
+            Toast.Add("当前规则未启用，快照可能不会生成", Severity.Warning);
+        _testingTrigger = true;
+        try
+        {
+            var device = await Store.GetDeviceAsync(_rule.TriggerTag.DeviceId);
+            if (device is null) throw new InvalidOperationException("触发源所属设备不存在。");
+            await Communication.WriteCoilAsync(device, (ushort)_rule.TriggerTag.Address, true);
+            Toast.Add("已置位触发位，正在生成快照…", Severity.Info);
+            await Task.Delay(2500);
+            await LoadSnapshotsAsync();
+            _activeTab = RecordsTab;
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"测试触发失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _testingTrigger = false;
+        }
+    }
+
+    private async Task OpenRecordAsync(SnapshotRecord record)
+        => await Dialogs.ShowAsync<SnapshotRecordDialog>(
+            "快照详情",
+            new DialogParameters<SnapshotRecordDialog> { { x => x.Record, record } },
+            new() { FullWidth = true, MaxWidth = MaxWidth.Medium, CloseButton = true });
+
+    // 结论解析：判定点位值为 1 → OK，2 → NG，其余 → 待判定
+    private static (string Text, Color Color) Verdict(string? json)
+    {
+        foreach (var item in Parse(json))
+        {
+            if (!item.Name.Contains("判定")) continue;
+            return item.Value.Trim() switch
+            {
+                "1" => ("OK", Color.Success),
+                "2" => ("NG", Color.Error),
+                _ => ("待判定", Color.Default)
+            };
+        }
+        return ("—", Color.Default);
+    }
+
+    private static string VerdictText(string? json) => Verdict(json).Text;
+
+    private static Color VerdictColor(string? json) => Verdict(json).Color;
+
+    private static string Summary(string? json)
+    {
+        var parts = Parse(json)
+            .Where(x => !x.Name.Contains("判定") && !string.IsNullOrWhiteSpace(x.Value))
+            .Take(2)
+            .Select(x => $"{x.Name} {x.Value}");
+        return string.Join(" / ", parts);
+    }
+
+    private static string AllValues(string? json)
+        => string.Join("; ", Parse(json).Select(x => $"{x.Name}={x.Value}"));
+
+    private static IReadOnlyList<SnapshotValueItem> Parse(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return [];
+        try
+        {
+            return System.Text.Json.JsonSerializer
+                .Deserialize<List<SnapshotValueItem>>(json) ?? [];
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return [];
+        }
+    }
+
+    private async Task OnSnapSearchChangedAsync(string _)
+    {
+        _snapPage = 1;
+        await LoadSnapshotsAsync();
+    }
+
+    private async Task OnRangeChangedAsync(int days)
+    {
+        _rangeDays = days;
+        _snapPage = 1;
+        await LoadSnapshotsAsync();
+    }
+
+    private async Task OnSnapPageChangedAsync(int page)
+    {
+        if (page == _snapPage) return;
+        _snapPage = page;
+        await LoadSnapshotsAsync();
+    }
+
+    private async Task OnSnapPageSizeChangedAsync(int size)
+    {
+        _snapPageSize = size is 100 or 200 ? size : 50;
+        _snapPage = 1;
+        await LoadSnapshotsAsync();
+    }
+
+    /// <summary>采集项行（页面编辑态，独立于实体以免追踪干扰）。</summary>
+    private sealed class PointRow
+    {
+        public required Guid TagId { get; init; }
+        public required string Name { get; init; }
+        public required TagDataType DataType { get; init; }
+        public string? Alias { get; set; }
+        public string? Unit { get; set; }
+        public int Decimals { get; set; }
+        public bool Required { get; set; }
+    }
+}

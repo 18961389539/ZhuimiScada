@@ -1,0 +1,25 @@
+@inject ISnackbar Toast
+
+<MudDialog>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-3">@Message</MudText>
+        <MudTextField T="string" @bind-Value="_note" Immediate="true" MaxLength="200"
+                      Label="确认备注（可选，随审计保留）" Lines="2"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">取消</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Confirm">确认</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] public IMudDialogInstance Dialog { get; set; } = default!;
+    [Parameter] public string Message { get; set; } = "";
+
+    private string _note = "";
+
+    private void Confirm() => Dialog.Close(DialogResult.Ok(_note));
+
+    private void Cancel() => Dialog.Cancel();
+}

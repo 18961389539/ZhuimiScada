@@ -1,0 +1,6 @@
+<MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@StatusColor">@StatusText</MudChip>
+@code {
+    [Parameter] public ConnectionStatus Status { get; set; }
+    private Color StatusColor => Status switch { ConnectionStatus.Online => Color.Success, ConnectionStatus.Faulted => Color.Error, ConnectionStatus.Connecting => Color.Warning, _ => Color.Default };
+    private string StatusText => Status switch { ConnectionStatus.Online => "在线", ConnectionStatus.Faulted => "通信异常", ConnectionStatus.Connecting => "连接中", ConnectionStatus.Disabled => "已禁用", _ => "已断开" };
+}
